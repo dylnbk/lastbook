@@ -153,9 +153,10 @@ class Index:
         self._tls = threading.local()
         self._excl = {'mtime': None, 'ids': set()}
         db = self._db()
-        # A library that travels keeps a rollback journal: one file, with no -wal or -shm beside it to be left behind or copied
-        # without. It is also a one-way door there: on exFAT a database that has been in WAL mode cannot be taken out of it
-        # (SQLite answers "attempt to write a readonly database"; the same statements succeed on APFS), so it never goes in.
+        # A library that travels keeps a rollback journal: one file, with no -wal or -shm beside it to be left behind on the
+        # drive or copied without. (The write-ahead log itself works on exFAT. What does not is a connection kept from the
+        # moment a database is made, in any journal mode: engine/sqlitefs.py. This one is closed again a few lines down, and
+        # every later use opens its own.)
         try:
             db.execute('PRAGMA journal_mode=' + ('DELETE' if lastbook_paths.PORTABLE else 'WAL'))
         except sqlite3.OperationalError as e:

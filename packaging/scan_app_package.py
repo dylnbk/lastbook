@@ -33,7 +33,10 @@ ADDRESSES = re.compile(rb'\b(?:192\.168|10\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01]))\.
 CHANNEL_NAMES = {'AddHostObjectToScript', 'add_WebMessageReceived', 'WebMessageReceived', 'PostWebMessageAsJson', 'PostWebMessageAsString', 'add_script_message_handler', 'addScriptMessageHandler_name_'}
 EXPECTED_REMOTE_NAME = 'engine.library'
 # What first-run setup may reach (engine/setup/download.py ALLOWED_HOSTS and ALLOWED_SUFFIXES). A change there must be made here too.
-SETUP_HOSTS = {'downloads.lastbook.org', 'huggingface.co', 'cas-bridge.xethub.hf.co'}
+SETUP_HOSTS = {'downloads.lastbook.org', 'huggingface.co', 'cas-bridge.xethub.hf.co',
+               # the open data the library builder reads: OpenStreetMap extracts and land polygons, elevation, addresses, postcodes, encyclopedias
+               'download.geofabrik.de', 'osmdata.openstreetmap.de', 'copernicus-dem-30m.s3.amazonaws.com', 'copernicus-dem-90m.s3.amazonaws.com',
+               'overturemaps-us-west-2.s3.amazonaws.com', 'download.geonames.org', 'download.kiwix.org', 'lb.download.kiwix.org', 'mirror.download.kiwix.org'}
 SETUP_SUFFIXES = {'.hf.co'}
 # http.server is left out: setup's handler class (engine.setup.api), like server.py's, answers the window in-process and listens on nothing.
 NET_MODULES = {'http.client', 'socket', '_socket', 'ssl', '_ssl', 'urllib.request', 'asyncio', 'ftplib', 'smtplib', 'xmlrpc.client'}

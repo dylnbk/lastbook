@@ -123,6 +123,43 @@ def make_library(folder):
     return lib
 
 
+def held_for(folder, seconds=16):
+    """The user store kept open on the drive, saving twice a second, for longer than an exFAT drive takes to give a new
+    file its lasting number (about ten seconds). Beside it, the plain way of opening a database, as a control: on a drive
+    that changes file numbers the control starts to fail and the store must not; on one that does not, neither fails."""
+    from engine import userstore
+    work = folder / 'held'
+    shutil.rmtree(work, ignore_errors=True)
+    work.mkdir(parents=True)
+    store = userstore.Store(work / 'user')
+    plain = sqlite3.connect(work / 'plain.sqlite', isolation_level=None)      # one connection from the empty file onward
+    plain.execute('PRAGMA journal_mode=DELETE')
+    plain.execute('CREATE TABLE t(a)')
+    first_number = os.stat(work / 'plain.sqlite').st_ino
+    out = {'seconds': seconds, 'store_saves': 0, 'store_errors': [], 'control_writes': 0, 'control_errors': 0, 'control_first_error_at': None, 'control_error': None}
+    t0 = time.time()
+    while time.time() - t0 < seconds:
+        try:
+            store.apply([{'op': 'put', 'ns': 'kv', 'id': f'k{out["store_saves"]}', 'value': 'v'}])
+            out['store_saves'] += 1
+        except Exception as e:
+            out['store_errors'].append(f'{type(e).__name__}: {e}')
+        try:
+            plain.execute('INSERT INTO t VALUES (1)')
+            out['control_writes'] += 1
+        except sqlite3.OperationalError as e:
+            out['control_errors'] += 1
+            if out['control_first_error_at'] is None:
+                out['control_first_error_at'], out['control_error'] = round(time.time() - t0, 1), getattr(e, 'sqlite_errorname', str(e))
+        time.sleep(0.5)
+    out['store_rows'] = len(store.all()['kv'])
+    out['number_changed'] = os.stat(work / 'plain.sqlite').st_ino != first_number
+    store.close()
+    plain.close()
+    shutil.rmtree(work, ignore_errors=True)
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('folder', help='an empty or new folder on the drive to test on')
@@ -184,6 +221,9 @@ def main():
 
     report['left_on_this_mac'] = changed_since(stamp)
     ok['nothing of ours was written under this Mac’s Library'] = not report['left_on_this_mac']
+    held = report['held_open'] = held_for(folder)
+    ok['the store went on saving for as long as it was held open'] = not held['store_errors'] and held['store_rows'] == held['store_saves'] > 20
+    report['this_drive_changes_file_numbers'] = held['number_changed']     # for the reader: was the check above put to the test here?
     report['ok'] = all(ok.values())
     if not a.keep:
         shutil.rmtree(folder, ignore_errors=True)

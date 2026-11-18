@@ -4,7 +4,7 @@
   PYTHONDONTWRITEBYTECODE=1 <venv python> -B app/tests/test_portable.py [-v]
 
 Uses the made-up library in derived/app-build/testdata (no model). Never packaged."""
-import io, json, os, re, shutil, socket, subprocess, sys, tempfile, unittest, urllib.error, urllib.request
+import io, json, os, re, shutil, socket, sqlite3, subprocess, sys, tempfile, unittest, urllib.error, urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -18,7 +18,7 @@ os.environ['LASTBOOK_DATA'] = str(DATA)
 os.environ['SURVIVAL_MODEL_BASE'] = 'http://127.0.0.1:9'
 os.environ['SURVIVAL_DISABLE_INDEX_WATCH'] = '1'
 sys.modules['onnxruntime'] = None   # this Mac runs no AI models
-from engine import portable, userstore, qr, paths  # noqa: E402
+from engine import portable, userstore, qr, paths, sqlitefs  # noqa: E402
 import server  # noqa: E402
 
 
@@ -208,7 +208,7 @@ class Kept(unittest.TestCase):
 
     def test_it_is_one_file_with_a_rollback_journal(self):
         self.store.apply([{'op': 'put', 'ns': 'kv', 'id': 'a', 'value': 'b'}])
-        self.assertEqual(self.store.db.execute('PRAGMA journal_mode').fetchone()[0], 'delete')
+        self.assertEqual(self.store.journal_mode(), 'delete')
         self.store.close()
         self.assertEqual(sorted(p.name for p in (self.tmp / 'user').iterdir()), ['userdata.sqlite'])
         again = userstore.Store(self.tmp / 'user')
@@ -245,6 +245,123 @@ class Kept(unittest.TestCase):
         s.apply([{'op': 'put', 'ns': 'kv', 'id': 'a', 'value': 'b'}])
         self.assertEqual(s.all()['kv'], {'a': 'b'})
         self.assertEqual(len([p for p in folder.iterdir() if p.name.startswith('userdata.unreadable-')]), 1)   # kept, in case it can be read by hand
+
+
+class Reopened(unittest.TestCase):
+    """engine/sqlitefs.py. What it guards against needs a real exFAT drive and ten seconds to show (mac_portable_check.py does
+    that); here, that a database is never used on the connection that made it, and that the error is mended by opening again."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix='lb-sqlitefs-'))
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
+
+    @staticmethod
+    def make(db):
+        db.execute('CREATE TABLE IF NOT EXISTS t(a)')
+
+    def test_the_connection_handed_back_is_not_the_one_that_made_the_file(self):
+        seen = []
+        real = sqlite3.connect
+
+        def watched(*a, **k):
+            c = real(*a, **k)
+            seen.append(c)
+            return c
+        with mock.patch.object(sqlitefs.sqlite3, 'connect', watched):
+            db = sqlitefs.connect(self.tmp / 'new.sqlite', self.make)
+        self.addCleanup(db.close)
+        self.assertEqual(len(seen), 2)                          # one to make it, closed; one to keep
+        self.assertIs(db, seen[1])
+        with self.assertRaises(sqlite3.ProgrammingError):       # the first really is closed
+            seen[0].execute('SELECT 1')
+        self.assertEqual(db.execute('PRAGMA journal_mode').fetchone()[0], 'delete')
+        db.execute('INSERT INTO t VALUES (1)')
+        self.assertEqual(sorted(p.name for p in self.tmp.iterdir()), ['new.sqlite'])
+        with mock.patch.object(sqlitefs.sqlite3, 'connect', watched):   # there already: opened once
+            again = sqlitefs.connect(self.tmp / 'new.sqlite', self.make)
+        self.addCleanup(again.close)
+        self.assertEqual(len(seen), 3)
+        self.assertEqual(again.execute('SELECT count(*) FROM t').fetchone()[0], 1)
+
+    def test_a_file_that_is_not_there_needs_a_way_to_make_it(self):
+        with self.assertRaises(ValueError):
+            sqlitefs.connect(self.tmp / 'none.sqlite')
+        self.assertFalse((self.tmp / 'none.sqlite').exists())
+
+    @staticmethod
+    def moved_error():
+        e = sqlite3.OperationalError('attempt to write a readonly database')
+        e.sqlite_errorcode, e.sqlite_errorname = 1032, 'SQLITE_READONLY_DBMOVED'
+        return e
+
+    def test_which_errors_mean_the_file_seems_to_have_moved(self):
+        self.assertTrue(sqlitefs.moved(self.moved_error()))
+        full = sqlite3.OperationalError('database or disk is full')
+        full.sqlite_errorcode = 13
+        self.assertFalse(sqlitefs.moved(full))
+        self.assertFalse(sqlitefs.moved(sqlite3.DatabaseError('file is not a database')))
+        self.assertTrue(sqlitefs.moved(sqlite3.OperationalError('attempt to write a readonly database')))   # an older Python gives no code
+
+    def test_a_write_that_meets_it_is_done_once_more_on_a_new_connection(self):
+        base = sqlitefs.Database(self.tmp / 'kept.sqlite', self.make)
+        self.addCleanup(base.close)
+        used = []
+
+        def write(db):
+            used.append(db)
+            db.execute('BEGIN')
+            db.execute('INSERT INTO t VALUES (?)', (len(used),))
+            if len(used) == 1:
+                raise self.moved_error()                        # as the drive would, part way through
+            db.execute('COMMIT')
+            return 'saved'
+        self.assertEqual(base.run(write), 'saved')
+        self.assertEqual(len(used), 2)
+        self.assertIsNot(used[0], used[1])
+        self.assertEqual(base.run(lambda db: db.execute('SELECT a FROM t').fetchall()), [(2,)])   # the first try left nothing behind
+
+    def test_it_is_tried_once_more_and_no_more(self):
+        base = sqlitefs.Database(self.tmp / 'kept.sqlite', self.make)
+        self.addCleanup(base.close)
+        tries = []
+
+        def write(db):
+            tries.append(1)
+            raise self.moved_error()
+        with self.assertRaises(sqlite3.OperationalError):
+            base.run(write)
+        self.assertEqual(len(tries), 2)
+
+    def test_other_errors_are_not_tried_again(self):
+        base = sqlitefs.Database(self.tmp / 'kept.sqlite', self.make)
+        self.addCleanup(base.close)
+        tries = []
+
+        def write(db):
+            tries.append(1)
+            db.execute('INSERT INTO nowhere VALUES (1)')
+        with self.assertRaises(sqlite3.OperationalError):
+            base.run(write)
+        self.assertEqual(len(tries), 1)
+
+    def test_the_store_keeps_saving_when_the_drive_changes_the_files_number(self):
+        store = userstore.Store(self.tmp / 'user')
+        self.addCleanup(store.close)
+        store.apply([{'op': 'put', 'ns': 'kv', 'id': 'a', 'value': '1'}])
+        first = store.base.db
+        real_run, hit = store.base.run, []
+
+        def flaky(fn):
+            def once(db):
+                if not hit:
+                    hit.append(1)
+                    raise self.moved_error()
+                return fn(db)
+            return real_run(once)
+        with mock.patch.object(store.base, 'run', flaky):
+            store.apply([{'op': 'put', 'ns': 'kv', 'id': 'b', 'value': '2'}])
+        self.assertEqual(store.all()['kv'], {'a': '1', 'b': '2'})
+        self.assertIsNot(store.base.db, first)                  # it is on a new connection now
 
 
 class Code(unittest.TestCase):
