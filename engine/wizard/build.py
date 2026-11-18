@@ -450,8 +450,10 @@ class Build:
         library.write_catalog(self.lib, records)
         library.write_summary(self.lib, records)
         counts = dict(plan['counts'], videos_pending=sum(1 for r in records if r.get('pending')))
+        # The maps a library says it has are the ones that are there: one that was asked for and could not be built is not
+        # among them, and one built before this choice was made is.
         library.write_pack(self.target, self.pack_was, {k: self.choice.get(k) for k in ('documents', 'encyclopedias', 'videos', 'encoder')}, counts,
-                           [m['id'] for m in self.choice.get('maps') or []])
+                           library.regions_here(self.target))
         self._save_state()
         return records
 

@@ -59,21 +59,34 @@ A region's name is Geofabrik's: the 554 extracts it publishes, from continents d
 the larger countries (`us/california`, `germany/bayern` is `bayern`). `content/regions/catalog.json` is the short
 list the app ships so regions can be chosen with no connection; `--write-catalog` refreshes it.
 
-Measured on an Apple M4, reading from and writing to an external SSD (the first build of each, which also fetched
-its elevation at 3 MB/s):
+Measured on an Apple M4, reading from and writing to an external SSD, with the builder as it is now (its second
+version: summits, ferries and borders, and roads known only by a number left out of the street finder). The elevation
+and the extracts were already fetched; the computer was also making videos smaller and downloading throughout, so
+these are slow times, not fast ones:
 
 | Region | Level | Extract | Time | Size | Holds |
 |---|---|---|---|---|---|
-| Isle of Man | detail | 6 MB | 14 s | 19 MB | 77,000 features, 585 help points |
-| Ireland and Northern Ireland | detail | 418 MB | 10 min | 1.4 GB | 6.5 million features, 38,600 help points, 114,000 streets, 49,000 postcodes |
-| Great Britain | detail | 2.2 GB | 62 min | 6.6 GB | 29.3 million features, 252,000 help points, 953,000 streets, 1.78 million postcodes |
-| Bulgaria | overview | 178 MB | 43 s (its elevation was already fetched) | 43 MB | 66,000 features, 27,400 help points |
-| Norway | overview | 1.4 GB | 10 min | 470 MB | 339,000 features, 36,600 help points, and a very long coast |
+| Isle of Man | detail | 6 MB | 13 s | 19 MB | 76,781 features, 585 help points, 2,051 streets, 87 postcodes |
+| Guernsey and Jersey | detail | 4 MB | 13 s | 13 MB | 50,320 features, 890 help points, 2,943 streets |
+| Ireland and Northern Ireland | detail | 418 MB | 10 min | 1.4 GB | 6.46 million features, 38,590 help points, 83,590 streets, 49,143 postcodes |
+| Great Britain | detail | 2.2 GB | 93 min | 6.6 GB | 29.28 million features, 252,021 help points, 926,082 streets, 1.78 million postcodes |
+| Bulgaria | overview | 178 MB | 67 s | 45 MB | 66,835 features, 27,363 help points |
+| Norway | overview | 1.4 GB | 14 min | 471 MB | 341,459 features, 36,550 help points, and a very long coast |
+| Spain | overview | 1.5 GB | 11 min | 283 MB | 780,556 features, 182,225 help points |
+| Italy | overview | 2.3 GB | 12 min | 317 MB | 950,898 features, 223,539 help points |
+| Poland | overview | 2.1 GB | 25 min | 236 MB | 608,757 features, 173,497 help points |
 
-These are from the builder's first version. The second adds summits, ferries and borders, so its regions are a
-little larger.
+The builder's first version made Great Britain in 62 minutes with less else going on (about fifteen of them lost to
+a mistake of mine, a large AI model loaded beside it).
 
-Great Britain's hour included about fifteen minutes lost to a mistake of mine (a large AI model loaded beside it).
+Together, for the library these were built for: 4 regions in full detail are 8.1 GB and took 104 minutes; 42
+countries of Europe in outline are 3.9 GB and took 156 minutes. France and Germany, the two largest extracts, were
+still being built when this was written.
+
+Each extract's size is in the list the app ships (`--write-catalog --sizes` asks Geofabrik for them), and the page
+that builds a library ([WIZARD.md](WIZARD.md)) estimates a region from it: in full detail 2.75 times the extract plus
+3.3 MB for each square degree of elevation; in outline 0.17 times plus 0.4 MB. The four detailed regions came within
+a tenth of that. Outline regions came out from under half of it to over twice.
 
 `--skip-built` leaves a region alone only if this version of the builder made it: when the builder learns to draw
 something new, regions made before are made again.

@@ -345,6 +345,13 @@ class Built(Temp):
                 asked.append(('data', str(data), str(sources_folder)))
                 Path(sources_folder).mkdir(parents=True, exist_ok=True)
                 (Path(sources_folder) / 'extract.osm.pbf').write_bytes(b'what a map is made from')
+                self.regions = Path(data) / 'derived' / 'geo' / 'regions'
+                self.made('isle-of-man')            # there from an earlier build
+
+            def made(self, rid):
+                (self.regions / rid).mkdir(parents=True, exist_ok=True)
+                (self.regions / rid / 'region.json').write_text(json.dumps({'id': rid, 'geofabrik': rid, 'level': 'detail'}))
+                (self.regions / rid / 'map.sqlite').write_bytes(b'a map')
 
             def current(self, rid, level):
                 return rid == 'isle-of-man'
@@ -352,7 +359,9 @@ class Built(Temp):
             def build(self, rid, level='detail', terrain=True):
                 asked.append((rid, level, terrain))
                 if rid == 'atlantis':
+                    (self.regions / '.building-atlantis').mkdir(parents=True, exist_ok=True)      # what a build that failed leaves
                     raise KeyError(rid)
+                self.made(rid)
 
             def close(self):
                 asked.append('closed')
@@ -365,7 +374,8 @@ class Built(Temp):
         self.assertEqual((status['maps_done'], status['maps_total']), (3, 3))
         self.assertEqual(len(status['problems']), 1)
         self.assertIn('atlantis', status['problems'][0])
-        self.assertEqual(json.loads((self.tmp / 'drive' / 'LastbookData' / 'pack.json').read_text())['regions'], ['isle-of-man', 'france', 'atlantis'])
+        # The library says it has the maps that are there: the one from before and the one built, not the one that failed
+        self.assertEqual(json.loads((self.tmp / 'drive' / 'LastbookData' / 'pack.json').read_text())['regions'], ['france', 'isle-of-man'])
         self.assertTrue((kept / 'extract.osm.pbf').is_file())                               # a folder someone named for this is theirs: left alone
 
     def test_what_maps_are_made_from_is_kept_beside_the_library_and_then_deleted(self):

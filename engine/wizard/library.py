@@ -189,6 +189,25 @@ def write_summary(lib, records):
     return out
 
 
+def regions_here(data):
+    """The ids of the map regions really in a library (derived/geo/regions/<id>/ with its region.json and map.sqlite), in
+    name order: what was asked for and failed is not among them, and what was there before is."""
+    root = Path(data) / 'derived' / 'geo' / 'regions'
+    out = []
+    try:
+        folders = sorted(p for p in root.iterdir() if p.is_dir() and not p.name.startswith('.'))
+    except OSError:
+        return out
+    for f in folders:
+        try:
+            info = json.loads((f / 'region.json').read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            continue
+        if (f / 'map.sqlite').is_file():
+            out.append(str(info.get('geofabrik') or info.get('id') or f.name))
+    return out
+
+
 def write_pack(data, was, choice, counts, maps=()):
     """pack.json: what this library is. `was` is the pack.json of the pack it was made from."""
     out = {'name': 'custom', 'size': 'custom', 'map': 'base', 'built': time.strftime('%Y-%m-%d'), 'sample': False, 'add_ons': [],
