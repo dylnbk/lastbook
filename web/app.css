@@ -856,6 +856,10 @@ body.map-maxed{overflow:hidden}
 .map-card .members small,.nearres button small{display:block;color:var(--ink3);font-size:13px}
 .nearres button{border-top:0;font-size:15px}.nearres button .msym{margin-top:2px}
 .nearres.busy{opacity:.55;transition:opacity .2s}
+/* the regions a map is made of: the same rows as the nearby list; the many kept in outline fold away */
+.mregions details{border-bottom:1px solid var(--line2)}.mregions summary{padding:9px 6px;cursor:pointer;color:var(--ink2);font-size:14px}
+.mregions summary:focus-visible{outline:3px solid var(--focus)}.mregions details[open] summary{border-bottom:1px solid var(--line2)}
+.mregions details button:last-child{border-bottom:0}
 .mapattr{font-size:11px;bottom:6px}.mapscale{bottom:6px}
 @media(max-width:1000px){main.map-page{padding-bottom:90px}.map-page .mapgrid{grid-template-columns:1fr}
   .map-page .maptools{max-height:none;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));margin-top:12px}}

@@ -43,6 +43,32 @@ def is_address_query(query):
     return bool(re.match(r'^\s*\d[\w-]*\s+\S', query))
 
 
+# ---- outside the US: postcodes as people write them, and a street without its house number ----
+# A UK postcode is an outward part (area letters, district) and an inward part (a digit and two letters), and is as often
+# typed with no space ("SW1A2AA") as with one. The place finder holds them with the space.
+UK_POSTCODE = re.compile(r'\s*([A-Za-z]{1,2}\d[A-Za-z\d]?)\s*(\d[A-Za-z]{2})\s*')
+HOUSE = r'\d+\s?[a-zA-Z]?(?:\s?[-/]\s?\d+\s?[a-zA-Z]?)?'       # 10, 10a, 10-12, 12/3
+
+
+def postcode_form(query):
+    """'sw1a2aa' -> 'SW1A 2AA'. None when the words are not a UK postcode."""
+    m = UK_POSTCODE.fullmatch(query or '')
+    return f'{m[1].upper()} {m[2].upper()}' if m else None
+
+
+def street_only(query):
+    """The words of an address with the house number taken out: '10 Downing Street, London' -> 'Downing Street London'.
+    The number is written first in Britain, Ireland, France and the US, and after the street in most of Europe
+    ('Hauptstraße 12, Berlin'): both are read. None when nothing but a number was written, or when there is no number."""
+    parts = [p.strip() for p in (query or '').split(',')]
+    first = re.sub(rf'^{HOUSE}\s+(?=\S)', '', parts[0], count=1)
+    if first == parts[0]:
+        first = re.sub(rf'(?<=\S)\s+{HOUSE}$', '', parts[0], count=1)
+    if first == parts[0] or not re.search(r'[^\W\d]', first):
+        return None
+    return ' '.join(p for p in [first] + parts[1:] if p)
+
+
 def street_forms(street):
     words = street.split()
     forms = [street, ' '.join(TO_DIGITS.get(word, word) for word in words),

@@ -33,7 +33,7 @@ if __name__ == '__main__':  # --data must be known before the paths below are wo
 
 import engine.paths as lastbook_paths  # noqa: E402  (data folder and program folder can differ in the packaged app)
 from engine.paths import ro_uri  # noqa: E402
-from engine import saved_pages, address_search, userstore, qr  # noqa: E402
+from engine import saved_pages, address_search, userstore, qr, regions  # noqa: E402
 from engine.setup import api as setup_api  # noqa: E402  (the one module that may download: only when the person asks)
 HERE = lastbook_paths.DATA  # holds derived/
 APP = lastbook_paths.APP  # holds web/ and content/
@@ -42,6 +42,7 @@ WEB = APP / 'web'
 CACHE = HERE / 'derived' / 'cache'
 MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
 PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
+ATLAS = regions.Atlas(HERE / 'derived' / 'geo' / 'regions')   # maps of anywhere, one folder each (engine/regions.py); empty when there are none
 os.environ.setdefault('SURVIVAL_DISABLE_INDEX_WATCH', '1')
 import engine.library as library  # noqa: E402  (provides Handler, search DB path, ZIM reader)
 import retrieval, assistant  # noqa: E402
@@ -809,7 +810,7 @@ def terrain_tile(z, x, y):
     zoom 13-17 from 1 m lidar around chosen places (tools/build_terrain_detail.py)."""
     path, attr = (TERRAIN_DETAIL, 'terrain_detail') if z >= 13 else (TERRAINDB, 'terrain')
     if not path.exists():
-        return None
+        return ATLAS.terrain(z, x, y) if z <= 12 else None
     db = getattr(_tls, attr, None)
     if db is None:
         db = sqlite3.connect(ro_uri(path), uri=True, check_same_thread=False)
@@ -818,6 +819,8 @@ def terrain_tile(z, x, y):
         row = db.execute('SELECT png FROM tile WHERE z=? AND x=? AND y=?', (z, x, y)).fetchone()
     except sqlite3.OperationalError:  # still being created
         return None
+    if row is None and z <= 12:
+        return ATLAS.terrain(z, x, y)   # outside the US elevation: a region built for somewhere else may have it
     return row[0] if row else None
 
 
@@ -844,12 +847,19 @@ def data_version():
             v += f".{int(f.stat().st_mtime) // 60}"
         except OSError:
             pass
-    return v
+    return v + '.' + ATLAS.version() if ATLAS else v
 
 
 def map_tile(z, x, y):
     version = data_version()
     if z > 9 or national_status().get('state') != 'complete':
+        if z <= 9 and ATLAS and national_status().get('state') != 'building':
+            # the same reason as below, kept in one file: thousands of small files cost a drive with large blocks dearly
+            data = regions.tile_store(ATLAS.root).get(version, z, x, y)
+            if data is None:
+                data = _map_tile(z, x, y, version)
+                regions.tile_store(ATLAS.root).put(version, z, x, y, data)
+            return data
         return _map_tile(z, x, y, version)
     # zoomed-out tiles cover huge areas and are slow to assemble: keep them on disk once the data has settled
     path = HERE / f'derived/geo/tilecache/{version}/{z}/{x}/{y}.json'
@@ -870,7 +880,7 @@ def map_tile(z, x, y):
 @functools.lru_cache(maxsize=2048)
 def _map_tile(z, x, y, version):
     db = mapdb()
-    if db is None:
+    if db is None and not ATLAS:
         return b'{"error":"map not built"}'
     lon0, lat0, lon1, lat1 = tile_bounds(z, x, y)
     pad = (lon1 - lon0) * 0.04
@@ -881,9 +891,11 @@ def _map_tile(z, x, y, version):
         s = math.sin(math.radians(max(-85, min(85, lat))))
         py = ((0.5 - math.log((1 + s) / (1 - s)) / (4 * math.pi)) * n - y) * EXT
         return px, py
-    rows = db.execute('SELECT f.layer,f.cls,f.name,f.geom FROM feat_idx i JOIN feat f ON f.id=i.id '
+    rows = [] if db is None else db.execute('SELECT f.layer,f.cls,f.name,f.geom FROM feat_idx i JOIN feat f ON f.id=i.id '
                       'WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? AND i.minz<=? ORDER BY f.id',
                       (lon0 - pad, lon1 + pad, lat0 - pad, lat1 + pad, z)).fetchall()
+    if ATLAS:   # the regions built for anywhere in the world, drawn with the same code as the map that came with a pack
+        rows += ATLAS.rows(z, lon0 - pad, lat0 - pad, lon1 + pad, lat1 + pad)
     national = national_mapdb()
     if national is not None and z >= 11:
         c = SOCAL_CELL
@@ -1056,7 +1068,9 @@ HELP = {'hospital': 'Hospital', 'clinic': 'Clinic', 'doctors': 'Doctor', 'pharma
         'car_repair': 'Car repair', 'bicycle_shop': 'Bicycle shop', 'wastewater_plant': 'Wastewater plant',
         'comms_tower': 'Communications tower', 'park': 'Park', 'courthouse': 'Courthouse',
         'college': 'College', 'university': 'University', 'kindergarten': 'Kindergarten', 'beach': 'Beach',
-        'embassy': 'Embassy', 'mineral': 'Recorded mineral / mine', 'oil_gas_well': 'Recorded oil / gas well',
+        'embassy': 'Embassy', 'water_well': 'Well or water pump (untested)', 'defibrillator': 'Defibrillator (AED)',
+        'ambulance_station': 'Ambulance station', 'assembly_point': 'Emergency assembly point',
+        'mineral': 'Recorded mineral / mine', 'oil_gas_well': 'Recorded oil / gas well',
         'boat_launch': 'Boating facility', 'fish_stocking': 'Fish-stocking record',
         'dam': 'Dam (National Inventory of Dams)', 'reservoir': 'Reservoir', 'lake': 'Lake or pond', 'pond': 'Pond',
         'orchard': 'Orchard', 'vineyard': 'Vineyard', 'berries': 'Berry field', 'perennial_veg': 'Asparagus field'}
@@ -1157,17 +1171,19 @@ def socal_classes():
 
 
 def _poi_sources(west, south, east, north):
-    """(connection, skip-SoCal-duplicates) pairs for service points."""
+    """(connection, SQL added to the WHERE so a point two maps hold is counted once) pairs for service points."""
     out = []
     if mapdb() is not None and east >= -121.4 and west <= -114.1 and north >= 32.5 and south <= 35.9:
-        out.append((mapdb(), False))
+        out.append((mapdb(), ''))
     nat = national_mapdb()
     if nat is not None:
         dedupe = east >= -121.4 and west <= -114.1 and north >= 32.5 and south <= 35.9 and mapdb() is not None
         if dedupe and not getattr(_tls, 'socal_fn', False):
             nat.create_function('socal', 3, lambda cls, lo, la: 1 if cls in socal_classes() and in_socal(lo, la) else 0, deterministic=True)
             _tls.socal_fn = True
-        out.append((nat, dedupe))
+        out.append((nat, ' AND socal(cls,lon,lat)=0' if dedupe else ''))
+    if ATLAS:
+        out += ATLAS.poi_sources(west, south, east, north)
     return out
 
 
@@ -1205,9 +1221,9 @@ def _pins(west, south, east, north, cx, cy, kinds, version):
 
     if services:
         q = ','.join('?' * len(services))
-        for db, dedupe in _poi_sources(west, south, east, north):
+        for db, once in _poi_sources(west, south, east, north):
             sql = (f'SELECT cls,COUNT(*),AVG(lat),AVG(lon),MIN(lon),MAX(lon),MIN(lat),MAX(lat),MIN(name) FROM poi '
-                   f'WHERE cls IN ({q}) AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?{" AND socal(cls,lon,lat)=0" if dedupe else ""} '
+                   f'WHERE cls IN ({q}) AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?{once} '
                    f'GROUP BY cls, CAST((lon+180)/? AS INT), CAST((lat+90)/? AS INT)')
             for k, n, la, lo, x0, x1, y0, y1, name in db.execute(sql, (*services, west, east, south, north, cx, cy)):
                 add(k, n, n, la, lo, x0, x1, y0, y1, name or '', {}, '')
@@ -1263,10 +1279,10 @@ def members(west, south, east, north, kinds, lat, lon, limit=60):
     eps = 1e-4  # the R-tree keeps float32 bounds (~1e-5° error)
     if services:
         q = ','.join('?' * len(services))
-        for db, dedupe in _poi_sources(west, south, east, north):
+        for db, once in _poi_sources(west, south, east, north):
             rows += [{'cls': c, 'label': HELP.get(c, c), 'name': n or '', 'lon': x, 'lat': y, 'summary': '', 'detail': {}, 'source': ''}
                      for c, n, x, y in db.execute(f'SELECT cls,name,lon,lat FROM poi WHERE cls IN ({q}) AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?'
-                                                  f'{" AND socal(cls,lon,lat)=0" if dedupe else ""} LIMIT 2000',
+                                                  f'{once} LIMIT 2000',
                                                   (*services, west - eps, east + eps, south - eps, north + eps))]
     for path in resource_dbs(resources):
         with sqlite3.connect(ro_uri(path), uri=True) as rdb:
@@ -1304,6 +1320,10 @@ def near(lat, lon, classes, limit=8):
                 if source is not db and db is not None and cls in socal_classes():
                     found = [r for r in found if not in_socal(r[2], r[3])]
                 rows.extend(found)
+            if ATLAS:
+                for source, once in ATLAS.poi_sources(lon - d, lat - d, lon + d, lat + d):
+                    rows.extend(source.execute(f'SELECT cls,name,lon,lat FROM poi WHERE cls=? AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?{once}',
+                                               (cls, lon - d, lon + d, lat - d, lat + d)).fetchall())
             rows = list({(r[0],r[1],round(r[2],5),round(r[3],5)):r for r in rows}.values())
             d *= 2
         for c, name, x, y in rows:
@@ -1396,27 +1416,49 @@ def water_places(q, limit=10, near=None):
 
 
 def places(q, limit=20, near=None):
-    if address_search.is_address_query(q):
-        return address_search.find_addresses(q, HERE / 'derived' / 'geo', limit=min(limit, 8), near=near)
-    if not PLACEDB.exists():
+    address = address_search.is_address_query(q)
+    if address:
+        found = address_search.find_addresses(q, HERE / 'derived' / 'geo', limit=min(limit, 8), near=near)
+        if found or not ATLAS:
+            return found
+    q = address_search.postcode_form(q) or q
+    dbs = []
+    if PLACEDB.exists():
+        dbs.append(sqlite3.connect(ro_uri(PLACEDB), uri=True))
+    dbs += [db for _, db in ATLAS.place_dbs()]
+    if not dbs:
         return []
-    db = sqlite3.connect(ro_uri(PLACEDB), uri=True)
-    words = re.findall(r'\w+', q)
-    if not words:
+
+    def search(text):
+        words = re.findall(r'\w+', text)
+        rows, full = [], False
+        for ws in word_sets(words) if words else ():
+            if full and len(ws) < len(words):
+                break  # every word matched somewhere: no need to loosen
+            if not ws:
+                continue
+            for db in dbs:
+                try:
+                    rows += db.execute('SELECT p.name,p.kind,p.detail,p.lat,p.lon,p.rank,p.source FROM place_fts f JOIN place p ON p.id=f.rowid '
+                                       'WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200',
+                                       (' '.join('"%s"*' % w.replace('"', '') for w in ws),)).fetchall()
+                except sqlite3.Error:
+                    continue    # a region being replaced this moment
+            if len(ws) == len(words):
+                full = bool(rows)
+        return list(dict.fromkeys(rows)), full
+    rows, full = search(q)
+    if not rows and not re.findall(r'\w+', q):
         return []
-    rows = []
-    full = False
-    for ws in word_sets(words):
-        if full and len(ws) < len(words):
-            break  # every word matched somewhere: no need to loosen
-        if not ws:
-            continue
-        rows += db.execute('SELECT p.name,p.kind,p.detail,p.lat,p.lon,p.rank,p.source FROM place_fts f JOIN place p ON p.id=f.rowid '
-                           'WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200',
-                           (' '.join('"%s"*' % w.replace('"', '') for w in ws),)).fetchall()
-        if len(ws) == len(words):
-            full = bool(rows)
-    rows = list(dict.fromkeys(rows))
+    street = address_search.street_only(q) if not full else None
+    if street:
+        # No index of house numbers has this address, and no place is called all of it. Where the map is made from OpenStreetMap
+        # alone (anywhere outside the US) the street itself can still be found: show that, and say the house was not.
+        found, whole = search(street)
+        streets = [r for r in found if r[1] == 'street']
+        if whole and streets:
+            q = street
+            rows = [(r[0], r[1], r[2] + ' · the street: house numbers are not in this map’s data', *r[3:]) for r in streets]
     def norm(t):
         return ' '.join(re.sub(r'\bsaint\b', 'st', re.sub(r'[^\w ]+', ' ', t.lower())).split())
     ql = norm(q)
@@ -1444,7 +1486,7 @@ def places(q, limit=20, near=None):
             continue
         seen.add(k)
         out.append({'name': name, 'kind': kind, 'detail': detail, 'lat': lat, 'lon': lon, 'source': src,
-                    'onMap': bool(pack_info()) or 32.5 < lat < 35.9 and -121.4 < lon < -114.1})
+                    'onMap': bool(pack_info()) or 32.5 < lat < 35.9 and -121.4 < lon < -114.1 or ATLAS.contains(lon, lat)})
         if len(out) >= limit:
             break
     water = water_places(q, near=near)
@@ -1516,10 +1558,15 @@ def _distinct(path, sql):
         db.close()
 
 
-@functools.lru_cache(maxsize=1)
 def map_contents():
-    """What a pack's map really holds, decided from its own files: which pin kinds, and the box they fall in. The rest of the map is the plain base."""
-    kinds, boxes = set(), []
+    return _map_contents(ATLAS.version())
+
+
+@functools.lru_cache(maxsize=2)
+def _map_contents(regions_now):
+    """What a pack's map really holds, decided from its own files: which pin kinds, and the box they fall in. The rest of the map is the plain base.
+    regions_now is only the cache's key: a region added or taken away is seen without a restart."""
+    kinds, boxes = set(ATLAS.classes()), [tuple(r.box) for r in ATLAS.regions()]
     for path in (MAPDB, HERE / 'derived/geo/national.sqlite'):
         kinds |= set(_distinct(path, 'SELECT DISTINCT cls FROM poi'))
         if Path(path).exists():
@@ -1534,7 +1581,7 @@ def map_contents():
                 db.close()
     for path in (LIB / 'geography/resources/atlas.sqlite', WATERDB, CROPDB):
         kinds |= set(_distinct(path, 'SELECT DISTINCT kind FROM resource'))
-    contours = any(r for r in _distinct(TERRAINDB, 'SELECT 1 FROM tile WHERE z>=11 LIMIT 1'))
+    contours = any(r for r in _distinct(TERRAINDB, 'SELECT 1 FROM tile WHERE z>=11 LIMIT 1')) or ATLAS.terrain_detail()
     bounds = None
     if boxes:
         bounds = [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
@@ -1619,10 +1666,56 @@ def map_info():
         geo.append({'label': 'Aerial photos, whole US (USGS The National Map: USDA NAIP and other orthoimagery)', 'status': 'Zoom 0-15 nationwide, 16 in California and towns · downloading'})
     pack = pack_info()
     extra = {'aerial': has_aerial()}
-    if pack:
+    if pack or ATLAS:
         extra.update(map_contents())
-        geo = pack_datasets(extra)
+        legacy = db is not None or national_mapdb() is not None
+        geo = (region_datasets() if ATLAS else []) + (pack_datasets(extra) if pack and (legacy or not ATLAS) else geo if legacy and not pack else [])
+    if ATLAS:
+        # Regions built for anywhere in the world: the page lists them, measures in kilometres unless told otherwise, and credits their sources.
+        extra.update(regions=ATLAS.summary(), units='metric', data_as_of=ATLAS.data_as_of(), credits=ATLAS.credits(),
+                     terrain_levels={'detail': 12, 'overview': 9} if ATLAS.has_terrain() else None)
     return {**extra, 'meta': meta, 'datasets': geo, 'national': {k: v for k, v in national_status().items() if k not in ('source', 'database')}, 'version': data_version(), 'aerial_detail': detail, 'aerial_rev': rev, 'terrain_circle': tdetail}
+
+
+def map_where(lat, lon):
+    """Which map a point is on: a region in full detail, a region in outline, the map that came with a pack ('other'), or none at all."""
+    r = ATLAS.at(lon, lat)
+    if r is not None:
+        return {'level': r.level, 'name': r.name, 'id': r.id}
+    return {'level': 'other' if mapdb() is not None or national_mapdb() is not None else None}
+
+
+def region_datasets():
+    """The panel beside the map, for regions built from open data: each detailed region by name, the overviews together."""
+    out = []
+    rs = ATLAS.regions()
+
+    def when(r):
+        day = (r.info.get('data_as_of') or '')[:10]
+        return f'mapped by {day}' if day else ''
+    for r in rs:
+        if r.level != 'detail':
+            continue
+        c = r.info.get('counts') or {}
+        finder = c.get('finder') or {}
+        bits = [when(r), f"{c.get('features', 0):,} features", f"{c.get('pois', 0):,} help points"]
+        if finder.get('streets'):
+            bits.append(f"{finder['streets']:,} streets" + (f" and {finder['postcodes']:,} postcodes" if finder.get('postcodes') else '') + ' in Find a place')
+        if r.has_terrain:
+            bits.append('elevation: relief, contours, 3D')
+        out.append({'label': f'{r.name}: every street and path, buildings, land, water, places and help points (OpenStreetMap)',
+                    'status': ' · '.join(b for b in bits if b), 'bytes': sum((r.info.get('bytes') or {}).values()), 'region': r.id})
+    over = [r for r in rs if r.level == 'overview']
+    if over:
+        names = ', '.join(r.name for r in over)
+        days = sorted(d for d in ((r.info.get('data_as_of') or '')[:10] for r in over) if d)
+        out.append({'label': f'Main roads, towns, rivers, lakes and every help point for {len(over)} more region{"" if len(over) == 1 else "s"} (OpenStreetMap)',
+                    'status': names + (f' · mapped by {days[0]}' if days else '') + ('. Side streets and buildings are not in these.'),
+                    'bytes': sum(sum((r.info.get('bytes') or {}).values()) for r in over)})
+    if any(r.has_terrain for r in rs):
+        out.append({'label': 'Elevation (Copernicus DEM, European Space Agency)',
+                    'status': 'About 30 m in the detailed regions, 90 m elsewhere. A surface model: it includes treetops and roofs.'})
+    return out
 
 
 def pack_datasets(have):
@@ -2233,6 +2326,8 @@ class Handler(library.Handler):
                 return self.send_json(near(float(qs['lat']), float(qs['lon']), cls, int(qs.get('limit', 5))))
             if path == '/api/map/info':
                 return self.send_json(map_info())
+            if path == '/api/map/where':
+                return self.send_json(map_where(float(qs['lat']), float(qs['lon'])))
             if path == '/api/places':
                 try:
                     near_pt = tuple(map(float, qs['near'].split(',')))[:2] if qs.get('near') else None
