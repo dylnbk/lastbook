@@ -34,8 +34,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, windows-latest, ubuntu-24.04]
+        os: [macos-latest, windows-latest, ubuntu-24.04]      # macos-latest is Apple silicon; macos-14 is no longer offered (the first run's jobs for it were cancelled)
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -45,11 +46,15 @@ jobs:
         run: python -m pip install --disable-pip-version-check -r packaging/portable/requirements.txt
       - name: ffmpeg, for the tests that make videos smaller (they are skipped without it)
         if: runner.os == 'Linux'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+        continue-on-error: true
+        timeout-minutes: 8          # the first run sat in this step for a quarter of an hour
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends ffmpeg
       - name: Tests
         shell: bash
         run: >
-          python -B -m unittest
+          python -X faulthandler -B -m unittest -v
           app.tests.test_readable app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_update
           app.tests.test_address_search app.tests.test_topic_search app.tests.test_chat_steps app.tests.test_chat_tables app.tests.test_validate_topics
           app.tests.test_libq app.tests.test_shell_macos app.tests.test_portable app.tests.test_wizard app.tests.test_regions
@@ -61,7 +66,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { os: macos-14, name: macos-arm64 }
+          - { os: macos-latest, name: macos-arm64 }
           - { os: windows-latest, name: windows-x64 }
           - { os: ubuntu-22.04, name: linux-x64 }        # the oldest supported runner: what is built there runs on newer systems, not the other way round
     runs-on: ${{ matrix.os }}
@@ -83,8 +88,11 @@ jobs:
         run: |
           git -c advice.detachedHead=false clone -q --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp.git llama.cpp
           test "$(git -C llama.cpp rev-parse HEAD)" = "$LLAMA_COMMIT"
+          # No web pages inside the server: Lastbook starts it with --no-webui, and fetching them is the one thing this build
+          # would download (the first run failed on exactly that: the pages published now are not the ones this tag expects).
           cmake -S llama.cpp -B llama-build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_CCACHE=OFF \
-            -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON
+            -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON \
+            -DLLAMA_BUILD_UI=OFF -DLLAMA_USE_PREBUILT_UI=OFF
           cmake --build llama-build --config Release --target llama-server -j 4
           mkdir llama-bin
           find llama-build -type f \( -name llama-server -o -name llama-server.exe \) -exec cp {} llama-bin/ \;

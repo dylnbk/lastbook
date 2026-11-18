@@ -91,7 +91,8 @@ elif WIN:
 else:
     excludes += ['shell_macos', 'shell_windows', 'shell_linux', 'clr', 'clr_loader', 'pythonnet', 'gi']
 
-a = Analysis([str(APP / 'main.py')], pathex=[str(clean_sysconfig()), str(APP), str(ROOT)], binaries=binaries, datas=datas, hiddenimports=hidden, excludes=excludes, noarchive=False)
+# Windows keeps no such record (and asking for its name there fails: found by the first build on Windows)
+a = Analysis([str(APP / 'main.py')], pathex=([] if WIN else [str(clean_sysconfig())]) + [str(APP), str(ROOT)], binaries=binaries, datas=datas, hiddenimports=hidden, excludes=excludes, noarchive=False)
 pyz = PYZ(a.pure)
 ICO = ROOT / 'packaging' / 'icon' / 'Lastbook.ico'
 exe = EXE(pyz, a.scripts, [('X utf8', None, 'OPTION')], exclude_binaries=True, name='Lastbook',
