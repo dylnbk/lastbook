@@ -13,7 +13,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from engine import sqlitefs
+from engine import procs, sqlitefs
 from . import catalog as catalogs
 from . import geom, sources
 from . import schema as S
@@ -58,17 +58,7 @@ def _forget_stale_nodes():
             continue
         if pid == os.getpid():
             continue
-        if os.name == 'nt':
-            gone = time.time() - f.stat().st_mtime > 2 * 86400      # no cheap way to ask here: one untouched for two days is nobody's
-        else:
-            try:
-                os.kill(pid, 0)
-                gone = False
-            except ProcessLookupError:
-                gone = True
-            except OSError:
-                gone = False        # someone else's process: not ours to judge
-        if gone:
+        if not procs.alive(pid):        # (someone else's process counts as there: not ours to judge)
             try:
                 f.unlink()
             except OSError:
@@ -148,7 +138,7 @@ class Builder:
                                progress=lambda what, n: say(f'  {n:,} {what}') if what == 'features' and n % 400000 < 40000 else None)
         finally:
             for left in nodes.parent.glob(nodes.name + '.*'):
-                left.unlink(missing_ok=True)
+                osm.forget_nodes(left)      # never an error of its own: the build's result, or what stopped it, is what is reported
         say(f'  map: {counts["features"]:,} features, {counts["pois"]:,} help points in {counts["seconds"]:.0f}s')
         info = {'id': entry.folder, 'geofabrik': entry.id, 'name': entry.name, 'level': level, 'parent': entry.parent,
                 'box': [round(v, 5) for v in entry.box], 'iso': self.catalog.iso_of(entry.id), 'schema': 1, 'builder': BUILDER,

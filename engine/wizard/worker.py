@@ -20,6 +20,8 @@ import time
 import traceback
 from pathlib import Path
 
+from engine.procs import alive
+
 EVERY = 2.0
 LOG_LIMIT = 4 * 2**20
 EFFORT = {'gentle': {'nice': 15, 'threads': 2, 'map_workers': 1, 'background': True},
@@ -53,29 +55,6 @@ def write_json(path, obj):
                 if attempt == 39:
                     raise
                 time.sleep(0.05)
-
-
-def alive(pid):
-    if not pid:
-        return True
-    if os.name == 'nt':
-        import ctypes
-        k = ctypes.windll.kernel32
-        k.OpenProcess.restype = ctypes.c_void_p         # a handle is as wide as a pointer: not to be cut to 32 bits
-        h = k.OpenProcess(0x1000, False, int(pid))      # PROCESS_QUERY_LIMITED_INFORMATION
-        if not h:
-            return False
-        code = ctypes.c_ulong()
-        ok = k.GetExitCodeProcess(ctypes.c_void_p(h), ctypes.byref(code))
-        k.CloseHandle(ctypes.c_void_p(h))
-        return bool(ok) and code.value == 259           # STILL_ACTIVE
-    try:
-        os.kill(int(pid), 0)
-    except ProcessLookupError:
-        return False
-    except OSError:
-        return True
-    return True
 
 
 def run(folder):

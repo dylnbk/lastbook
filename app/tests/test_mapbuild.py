@@ -152,7 +152,23 @@ class Extract(Temp):
         self.assertEqual(rows(out, "SELECT COUNT(*) FROM poi WHERE cls='hospital'"), [(1,)])
         self.assertEqual(rows(out, "SELECT COUNT(*) FROM feat WHERE layer='place' AND name='Eastby'"), [(1,)])
         self.assertEqual(made['pois'], 4)
-        self.assertEqual([p.name for p in self.tmp.iterdir() if p.name.startswith('nodes')], [])                    # the node files are gone
+        left = [p for p in self.tmp.iterdir() if p.name.startswith('nodes')]
+        if os.name == 'nt':
+            self.assertEqual([p.name for p in left if p.stat().st_size], [])        # Windows will not remove a file that is open: they are emptied
+        else:
+            self.assertEqual([p.name for p in left], [])                            # the node files are gone
+
+    def test_a_node_file_that_cannot_be_removed_is_emptied(self):
+        """What Windows does with a file that is open, stood in for here: the gigabytes are given back even so."""
+        from engine.mapbuild import osm
+        f = self.tmp / 'nodes.9'
+        f.write_bytes(b'x' * 4096)
+        with mock.patch.object(osm.os, 'unlink', side_effect=PermissionError(13, 'in use')):
+            self.assertTrue(osm.forget_nodes(f))
+        self.assertEqual(f.stat().st_size, 0)
+        self.assertTrue(osm.forget_nodes(f))
+        self.assertFalse(f.exists())
+        self.assertTrue(osm.forget_nodes(f))        # not there: nothing to do
 
     def test_many_lines_that_cannot_be_placed_stop_the_build(self):
         from engine.mapbuild import osm
@@ -296,14 +312,14 @@ class Whole(Temp):
         self.assertTrue(seen['node_index'].startswith(str(Path(tempfile.gettempdir()))))
         self.assertNotIn(str(self.tmp / 'LastbookData'), seen['node_index'])
 
-    @unittest.skipIf(os.name == 'nt', 'asks whether a process is there the POSIX way')
     def test_what_a_killed_build_left_is_deleted_before_the_next(self):
         import subprocess
         gone = subprocess.Popen([sys.executable, '-c', 'pass'])
         gone.wait()
         own = self.tmp / 'scratch'
         own.mkdir()
-        names = {'dead': f'lastbook-nodes-{gone.pid}-poland.0', 'mine': f'lastbook-nodes-{os.getpid()}-france.0', 'another': 'lastbook-nodes-1-spain.0',
+        system = 4 if os.name == 'nt' else 1        # a process that is always there and is not this user's
+        names = {'dead': f'lastbook-nodes-{gone.pid}-poland.0', 'mine': f'lastbook-nodes-{os.getpid()}-france.0', 'another': f'lastbook-nodes-{system}-spain.0',
                  'odd': 'lastbook-nodes-notanumber-x.0', 'other': 'something-else.bin'}
         for n in names.values():
             (own / n).write_bytes(b'x' * 10)

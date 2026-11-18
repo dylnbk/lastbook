@@ -70,6 +70,26 @@ def _overview_filter(osmium):
     return osmium.filter.TagFilter(*sorted(set(pairs)))
 
 
+def forget_nodes(path):
+    """Removes a file where nodes were kept. True when nothing of it is left to take room.
+    The library that reads the extract keeps the file open until the program ends (seen with lsof on a Mac: the mapping goes
+    with the reader, the descriptor stays). A Mac and Linux remove an open file all the same. Windows will not (the first run
+    of the tests there found both files still in place), so there it is emptied, which gives the room back at once, and the
+    empty file is removed before a later build (build._forget_stale_nodes)."""
+    try:
+        os.unlink(path)
+        return True
+    except FileNotFoundError:
+        return True
+    except OSError:
+        pass
+    try:
+        os.truncate(path, 0)
+        return True
+    except OSError:
+        return False
+
+
 def build(pbf, out, level='detail', buildings=True, node_index=None, progress=None, control=None, name=''):
     """pbf (one, or a list read one after another) -> out (a new map.sqlite).
     node_index: a file for where nodes are, instead of memory (a country needs gigabytes). It is memory-mapped: keep it on
@@ -165,10 +185,7 @@ def build(pbf, out, level='detail', buildings=True, node_index=None, progress=No
             yield from fp
             del fp
             if node_index:
-                try:
-                    os.unlink(f'{node_index}.{i}')
-                except OSError:
-                    pass
+                forget_nodes(f'{node_index}.{i}')
 
     for o in objects():
         n['seen'] += 1
@@ -283,6 +300,14 @@ def build(pbf, out, level='detail', buildings=True, node_index=None, progress=No
             # a way with a node the extract does not hold (it crosses the extract's edge), a ring that will not close
             n['bad'] += 1
     flush(force=True)
+    if node_index:
+        # Once more, now that nothing read from the extracts is held: on Windows a file still mapped can be neither removed nor emptied
+        o = tags = None
+        import gc
+        gc.collect()
+        for i in range(len(files)):
+            if os.path.exists(f'{node_index}.{i}'):
+                forget_nodes(f'{node_index}.{i}')
     if n['bad'] > 200 and n['bad'] > 0.01 * (n['road'] + n['area'] + n['bldg']):
         # A few at an extract's edge are expected. Many means where the nodes are was not kept properly: a map with holes in it must not pass for whole.
         db.close()
