@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Lastbook" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#10805C</item>
+        <item name="colorAccent">#10805C</item>
+        <item name="android:statusBarColor">#14453A</item>
+    </style>
+</resources>

@@ -170,6 +170,8 @@ def main():
         lines.append('  Not on it yet: ' + ', '.join(names[k] for k in missing) + '. Their launchers say so when opened.')
     if not (drive / 'Install-Android.apk').is_file():
         lines.append('  The Android app (Install-Android.apk) is not on it yet.')
+    else:       # as mobile/android/README.md has it: to be taken out when someone has run it on a phone
+        lines.append('  The Android app has been run on a virtual Android 14 phone only: not yet on a real one, nor with a drive plugged in.')
     what = ''
     try:
         pack = json.loads((data / 'pack.json').read_text(encoding='utf-8'))

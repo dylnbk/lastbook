@@ -32,7 +32,7 @@ its drive ([engine/portable.py](../engine/portable.py)).
 | Mac (Apple silicon) | On this Mac, from the source | From a 1 TB exFAT drive, by its launcher, on the Mac it was built on: the app's own window, on a library of 12,851 records |
 | Windows (64-bit) | **Not yet.** The workflow below builds it | **Never** |
 | Linux (x86-64) | **Not yet.** The workflow below builds it | The launcher, with a stand-in for the program, on a Mac. The program itself: **never** |
-| Android | **Not yet** | **Never** |
+| Android | On this Mac: `Install-Android.apk`, 68 MB ([mobile/android](../mobile/android/README.md)) | On a virtual Android 14 phone, where its engine gave the desktop's answers. **Never on a real phone, nor with a drive plugged in** |
 | iPhone and iPad | See [mobile/ipad](../mobile/ipad/README.md) | |
 
 The Windows and Linux programs are the same Python as the Mac's and the same code, and the part of it they open with

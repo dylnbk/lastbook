@@ -216,6 +216,24 @@ class Started(unittest.TestCase):
         self.assertEqual(self.ask(base + '/api/setup/state', headers={'Host': 'evil.example'})[0], 403)
         self.assertEqual(self.ask(base + '/api/setup/pause', {}, headers={'Origin': 'http://evil.example'})[0], 403)
 
+    def test_a_program_that_only_opens_a_library(self):
+        """As the Android app starts the engine: its pages somewhere other than beside its Python, and no setup or builder to ask."""
+        buildkit.write_pack(self.tmp / 'LastbookData')
+        pages = self.tmp / 'unpacked'
+        shutil.copytree(ROOT / 'web', pages / 'web')
+        shutil.copytree(ROOT / 'content', pages / 'content')
+        (pages / 'web' / 'app.js').write_text('/* the copy that was unpacked */\n' + (ROOT / 'web' / 'app.js').read_text(encoding='utf-8'), encoding='utf-8')
+        base = self.start('--data', str(self.tmp / 'LastbookData'), env={'LASTBOOK_APP': str(pages), 'LASTBOOK_NO_SETUP': '1'})
+        code, js = self.ask(base + '/ui/app.js')
+        self.assertEqual(code, 200)
+        self.assertTrue(js.startswith(b'/* the copy that was unpacked */'))               # the pages come from where it was told
+        self.assertEqual(self.ask(base + '/api/search?q=boil')[1][0]['doc_id'], 'water-guide')
+        self.assertGreater(len(self.ask(base + '/api/topics')[1]), 3)                   # and the guides
+        for path in ('/api/wizard/state', '/api/setup/state'):
+            self.assertEqual(self.ask(base + path)[0], 404, path)
+        for path in ('/api/wizard/start', '/api/setup/start', '/api/wizard/target'):
+            self.assertEqual(self.ask(base + path, {})[0], 404, path)
+
     def test_the_port_asked_for(self):
         s = socket.socket()
         s.bind(('127.0.0.1', 0))

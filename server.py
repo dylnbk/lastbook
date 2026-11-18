@@ -59,6 +59,7 @@ SERVER = None  # the running HTTP server, so the packaged app's launcher can sto
 PORTABLE = lastbook_paths.PORTABLE  # a library that travels: what the person keeps is kept in it, and nothing on the computer
 USERSTORE = userstore.Store(lastbook_paths.USER)  # saved items, chats and the page's settings; opened at the first use
 THIS_COMPUTER = ('127.0.0.1', '::1', '::ffff:127.0.0.1')  # the app's own window (app/bridge.py) or a browser on this computer
+NO_SETUP = os.environ.get('LASTBOOK_NO_SETUP') == '1'    # a program that only opens a library (the Android app): no setup and no builder to ask
 
 _pdf_lock = threading.Lock()  # PDFium is not thread-safe
 
@@ -2229,6 +2230,8 @@ class Handler(library.Handler):
         if not ok:
             return self.deny()
         rpath = urllib.parse.urlsplit(self.path).path
+        if NO_SETUP and rpath.startswith(('/api/setup/', '/api/wizard/')):
+            return self.send_json({'error': 'not found'}, 404)
         if rpath.startswith('/api/setup/'):  # first-run setup and Library and local AI: engine/setup/api.py, this computer only
             return setup_api.handle(self, 'POST', rpath)
         if rpath.startswith('/api/wizard/'):  # a library of chosen parts, built here: engine/wizard/api.py, this computer only
@@ -2346,6 +2349,8 @@ class Handler(library.Handler):
             if not self.path_ok(path):
                 return self.send_json({'error': 'not found'}, 404)
             qs = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
+            if NO_SETUP and path.startswith(('/api/setup/', '/api/wizard/')):
+                return self.send_json({'error': 'not found'}, 404)
             if path.startswith('/api/setup/'):
                 return setup_api.handle(self, 'GET', path)
             if path.startswith('/api/wizard/'):

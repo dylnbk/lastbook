@@ -11,7 +11,8 @@
 # Nothing here is signed with a certificate: the Mac app is ad hoc signed, the Windows app is unsigned.
 #
 # This file was written on a Mac and has not yet been run. Until its first run is green, what it says of Windows and
-# Linux is what is intended, not what is known: see docs/PORTABLE-DRIVE.md.
+# Linux is what is intended, not what is known: see docs/PORTABLE-DRIVE.md. (The Mac build and the Android build have
+# been done by hand on that Mac, with the same commands.)
 name: Portable drive
 
 on:

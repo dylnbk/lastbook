@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- The pages are served to the app's own WebView from inside the app, at 127.0.0.1. Android asks for this permission
+         for any socket at all, that one included. Nothing here opens a connection to anywhere else: the engine's downloader
+         is not reachable from this app's pages (no setup, no builder), and the WebView is kept to 127.0.0.1 (MainActivity). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- "All files access": a library on a plugged-in drive or a memory card is ordinary files in ordinary folders, read in
+         place. The person grants it by hand in Settings; without it the app can only say what it needs. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@drawable/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Lastbook">
+        <activity
+            android:name=".MainActivity"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|smallestScreenSize|uiMode"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

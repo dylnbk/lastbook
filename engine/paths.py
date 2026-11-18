@@ -11,7 +11,9 @@ import sys
 from pathlib import Path
 
 FROZEN = bool(getattr(sys, 'frozen', False))
-APP = Path(sys._MEIPASS) if FROZEN else Path(__file__).resolve().parents[1]
+# LASTBOOK_APP: where web/ and content/ are, for a program whose Python files are not beside them (the Android app keeps
+# its Python inside the package and unpacks the pages to its own folder: mobile/android).
+APP = Path(os.environ['LASTBOOK_APP']) if os.environ.get('LASTBOOK_APP') else Path(sys._MEIPASS) if FROZEN else Path(__file__).resolve().parents[1]
 DATA = Path(os.environ.get('LASTBOOK_DATA') or APP).resolve()
 LIB = (DATA / 'library-data').resolve()
 USER = DATA / 'user'

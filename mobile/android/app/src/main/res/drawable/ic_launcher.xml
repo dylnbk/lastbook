@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lastbook's mark: a shield with the lines of a page, as in the app's own header (web/setup.html). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#14453A"
+        android:pathData="M0,0h24v24h-24z" />
+    <path
+        android:fillColor="#333CC690"
+        android:pathData="M12,4.5L6,7.2v4c0,3.3 2.5,6.2 6,6.7c3.5,-0.5 6,-3.4 6,-6.7v-4z" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M12,4.5L6,7.2v4c0,3.3 2.5,6.2 6,6.7c3.5,-0.5 6,-3.4 6,-6.7v-4z"
+        android:strokeColor="#3CC690"
+        android:strokeLineJoin="round"
+        android:strokeWidth="1.1" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M9.6,8.9h4.8M9.6,11.2h4.8M9.6,13.5h2.8"
+        android:strokeColor="#3CC690"
+        android:strokeLineCap="round"
+        android:strokeWidth="1.1" />
+</vector>

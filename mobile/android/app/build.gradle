@@ -1,0 +1,104 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+    id 'com.chaquo.python'
+}
+
+// The repository this app is part of: the engine, the pages and the guides are taken from it at build time, never copied in.
+def repo = rootProject.projectDir.parentFile.parentFile
+
+android {
+    namespace 'org.lastbook.portable'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'org.lastbook.portable'
+        // Android 11: the first with "All files access", which reading a library on a plugged-in drive needs.
+        minSdk 30
+        targetSdk 35
+        versionCode 1
+        versionName '0.1'
+        ndk {
+            // Phones and tablets of the last several years, and the emulator on an Intel computer.
+            abiFilters 'arm64-v8a', 'x86_64'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            // There is no release key. Signed with the build machine's debug key so that it installs at all:
+            // a copy built on another machine is signed differently, and Android will not install one over the other.
+            signingConfig signingConfigs.debug
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+    sourceSets {
+        main {
+            assets.srcDirs += [layout.buildDirectory.dir('lastbook-assets').get().asFile]
+        }
+    }
+    androidResources {
+        // The pages are read from the package as they are: nothing in them is to be squeezed or renamed.
+        noCompress += ['js', 'css', 'html', 'json', 'svg', 'png', 'webmanifest']
+    }
+}
+
+chaquopy {
+    defaultConfig {
+        version '3.12'
+        pip {
+            // What the engine imports. Two of its packages have no build for Android:
+            //   libzim     so encyclopedias do not open (as on iPhone and iPad);
+            //   pypdfium2  (tried: pip found only its source, which does not build here), so a page of a PDF is drawn by
+            //              Android's own PdfRenderer instead, behind the same few calls: src/main/python/pypdfium2.py.
+            install 'numpy'
+            install 'beautifulsoup4==4.15.0'
+        }
+    }
+    sourceSets {
+        main {
+            srcDir layout.buildDirectory.dir('lastbook-engine').get().asFile
+        }
+    }
+}
+
+// The engine's own Python: the same files the desktop app runs. No tests, no tools, no packaging.
+tasks.register('syncEngine', Sync) {
+    from(repo) {
+        include 'server.py', 'retrieval.py', 'assistant.py', 'llm_local.py'
+        include 'engine/**/*.py', 'engine/setup/roots.pem'
+        exclude '**/__pycache__/**', 'engine/vendor-macos/**'
+    }
+    from(new File(repo, 'app')) {
+        include 'shell_browser.py'
+    }
+    into layout.buildDirectory.dir('lastbook-engine')
+}
+
+// The pages and the guides, into the package's assets: the app unpacks them to its own folder when it first runs.
+tasks.register('syncPages', Sync) {
+    from(repo) {
+        include 'web/**', 'content/gaps.json', 'content/topics/*.json', 'content/regions/*.json'
+        exclude '**/.DS_Store', 'web/home-area.json'
+    }
+    into layout.buildDirectory.dir('lastbook-assets/lastbook')
+}
+
+tasks.named('preBuild') { dependsOn 'syncEngine', 'syncPages' }
+tasks.configureEach { t ->
+    if (t.name.startsWith('merge') && (t.name.endsWith('PythonSources') || t.name.endsWith('Assets'))) {
+        t.dependsOn 'syncEngine', 'syncPages'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.7.0'
+    implementation 'androidx.webkit:webkit:1.12.1'
+}

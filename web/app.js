@@ -6,7 +6,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fileUrl = p => '/' + String(p || '').split('/').map(encodeURIComponent).join('/');
 const main = $('#main');
 const IN_WINDOW = location.protocol === 'lastbook:' || location.hostname === 'lastbook.invalid';   // the desktop app, not a browser over the server
-const ON_THIS_COMPUTER = IN_WINDOW || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);   // the app's window, or a browser on the computer the library is open on (app/shell_browser.py, python server.py)
+const ON_THIS_COMPUTER = (IN_WINDOW || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) && !window.LB_NO_SETUP;   // the app's window, or a browser on the computer the library is open on (app/shell_browser.py, python server.py)
 if (ON_THIS_COMPUTER) $('#sideSettings').hidden = false;   // Library and local AI (web/setup.html): answered only to this computer, so offered only on it
 
 /* ---------------------------------------------------------------- icons -- */
