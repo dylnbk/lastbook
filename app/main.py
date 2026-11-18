@@ -32,6 +32,7 @@ CATALOG = os.path.join('library-data', 'catalog.json')
 ASK_TITLE = 'Find your Lastbook library'
 ASK = 'Lastbook needs its library folder, called LastbookData. Unzip the library you downloaded, then choose that folder.'
 TRAVELLING = None   # the library that travels (engine/portable.py), once main() has found one: nothing is then kept on this computer
+BROWSER = None      # {'port', 'open', 'box'} when the app is shown in this computer's web browser (shell_browser.py), not a window of its own
 
 
 def go_portable(data):
@@ -191,6 +192,8 @@ def libraries_here():
 def pick_folder(files=False):
     """The native folder or file picker, opened only at the person's request."""
     out, done = [], threading.Event()
+    if BROWSER is not None:     # a browser tab has no folder chooser of the app's: the pages ask for the path to be typed
+        return None
     if sys.platform == 'darwin':
         import AppKit
         from PyObjCTools import AppHelper
@@ -260,6 +263,8 @@ def relaunch():
         os.environ['LASTBOOK_DATA'] = str(TRAVELLING)
     os.environ.pop('LASTBOOK_PORTABLE', None)   # worked out again from the library itself
     os.environ.pop('LASTBOOK_PORTABLE_STATE', None)
+    if BROWSER is not None:         # the next start is in the browser again, at the address the open tab has
+        os.environ['LASTBOOK_BROWSER'] = '1'
     print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} setup finished: starting again', flush=True)
     if sys.platform == 'win32':
         import subprocess
@@ -289,6 +294,9 @@ def run_setup():
     open_log(work)
     print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} start pid={os.getpid()} args={sys.argv[1:]} setup', flush=True)
     setup_api.configure(mode='first-run', **setup_options())
+    if BROWSER is not None:
+        import shell_browser
+        return shell_browser.run(shell_browser.guarded(setup_api.SetupHandler), BROWSER['port'], BROWSER['open'], BROWSER['box'])
     if sys.platform == 'darwin':
         import shell_macos
         shell_macos.run(B.Bridge(setup_api.SetupServer, 'stream', B.ORIGIN_MAC))
@@ -311,7 +319,9 @@ def run_setup():
 
 
 def show_error(message):
-    if sys.platform == 'darwin':
+    if BROWSER is not None:
+        pass                    # no window of its own to say it in: the terminal and the log below
+    elif sys.platform == 'darwin':
         import shell_macos
         shell_macos.show_error(message)
     elif sys.platform == 'win32':
@@ -376,12 +386,45 @@ def open_log(data):
     return logs
 
 
+def window_problem():
+    """Why this computer cannot show Lastbook in a window of its own, or None when it can. Looked at before anything is opened."""
+    try:
+        if sys.platform == 'darwin':
+            import shell_macos  # noqa: F401
+        elif sys.platform == 'win32':
+            import shell_windows
+            return shell_windows.preflight()
+        elif sys.platform.startswith('linux'):
+            import gi
+            gi.require_version('Gtk', '3.0')
+            gi.require_version('WebKit2', '4.1')
+            import shell_linux  # noqa: F401
+        else:
+            return 'Lastbook has no window of its own on this system.'
+    except Exception as e:      # a part the window needs is not on this computer (WebKitGTK's Python bindings, the WebView2 runtime)
+        return f'{type(e).__name__}: {e}'
+    return None
+
+
 def main():
+    global BROWSER
     ap = argparse.ArgumentParser(description='Lastbook')
     ap.add_argument('--data', help='data folder holding library-data/ and derived/ (or set LASTBOOK_DATA)')
     ap.add_argument('--ask', action='store_true', help='ask for the library folder in a dialog instead of opening setup')
     ap.add_argument('--portable', action='store_true', help='the --data folder is a library that travels (a USB drive): keep everything on its drive and nothing on this computer')
+    ap.add_argument('--browser', action='store_true', help='show Lastbook in this computer\'s web browser instead of a window of its own (a loopback address only)')
+    ap.add_argument('--window-or-browser', action='store_true', help='a window of its own where this computer can make one, the web browser where it cannot')
+    ap.add_argument('--port', type=int, default=0, help='with --browser: the loopback port (default: one the system chooses)')
+    ap.add_argument('--no-open', action='store_true', help='with --browser: do not open the browser (the address is printed)')
+    ap.add_argument('--no-box', action='store_true', help='with --browser: no "Lastbook is running" box; stop it from the terminal')
     a = ap.parse_args()
+    why = None
+    if not (a.browser or os.environ.get('LASTBOOK_BROWSER')) and a.window_or_browser:
+        why = window_problem()
+    if a.browser or os.environ.get('LASTBOOK_BROWSER') or why:
+        BROWSER = {'port': a.port, 'open': not a.no_open, 'box': not a.no_box}
+        if why:
+            print(f'no window of its own here ({why}): opening in the web browser', file=sys.__stderr__ or sys.stderr, flush=True)
     given = a.data or os.environ.get('LASTBOOK_DATA')    # a folder named outright is opened as it is: only its own staged switch is made
     # A library that travels: the one named, when it is marked as one or --portable says so, else a marked one beside the program.
     from engine import portable
@@ -391,7 +434,7 @@ def main():
             portable.mark(travelling)
         go_portable(travelling.resolve())
         given = a.data = str(TRAVELLING)
-    if sys.platform.startswith('linux'):
+    if sys.platform.startswith('linux') and BROWSER is None:
         import shell_linux
         if not shell_linux.claim(str(app_folders()[1])):     # already open: that window comes to the front instead
             return 0
@@ -404,7 +447,7 @@ def main():
         return run_setup()
     data = data_folder(a.data)
     if data is None:
-        if a.ask:
+        if a.ask and BROWSER is None:
             data = ask_for_library()
             if data is None:
                 return 0
@@ -418,7 +461,7 @@ def main():
     os.environ.setdefault('LASTBOOK_LOCAL_AI', '1')   # the optional local AI (llm_local.py), used when its model file is found
     open_log(data)
     print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} start pid={os.getpid()} args={sys.argv[1:]} data={data}', flush=True)
-    if sys.platform == 'win32':
+    if sys.platform == 'win32' and BROWSER is None:
         import ctypes
         ctypes.windll.kernel32.SetErrorMode(0x0003)     # SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX: a crash here goes to nobody, and processes started from here inherit that
         import shell_windows
@@ -433,6 +476,9 @@ def main():
     setup_api.configure(mode='manage', current=data, **setup_options())
     from engine.wizard import api as wizard_api
     wizard_api.app_started()        # a build left running when its library was opened is carried on
+    if BROWSER is not None:
+        import shell_browser
+        return shell_browser.run(server.Handler, BROWSER['port'], BROWSER['open'], BROWSER['box'])
     import bridge as B
     if sys.platform == 'darwin':
         import shell_macos

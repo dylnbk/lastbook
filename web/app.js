@@ -6,7 +6,8 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const fileUrl = p => '/' + String(p || '').split('/').map(encodeURIComponent).join('/');
 const main = $('#main');
 const IN_WINDOW = location.protocol === 'lastbook:' || location.hostname === 'lastbook.invalid';   // the desktop app, not a browser over the server
-if (IN_WINDOW) $('#sideSettings').hidden = false;   // Library and local AI (web/setup.html) is in the desktop app only
+const ON_THIS_COMPUTER = IN_WINDOW || /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);   // the app's window, or a browser on the computer the library is open on (app/shell_browser.py, python server.py)
+if (ON_THIS_COMPUTER) $('#sideSettings').hidden = false;   // Library and local AI (web/setup.html): answered only to this computer, so offered only on it
 
 /* ---------------------------------------------------------------- icons -- */
 const I = {
@@ -1037,7 +1038,7 @@ async function library() {
   <div class="needs">${learnTopics().map(t => `<a class="need" href="#/t/${t.id}" ${tcStyle(t.id)}><span class="ico">${ico(t.id)}</span><b>${esc(SHORT[t.id] || t.title)}</b><small>${esc(t.short || '')} · ${(t.route || []).length} steps</small></a>`).join('')}</div>
   ${zims.length ? secHead('Encyclopedias', 'Complete offline copies', '<a href="#/encyclopedias">Search them</a>') + `<div class="cards2">${zims.map(z => `<a class="card" href="#/wiki/${z[0]}/?from=${encodeURIComponent('#/library')}"><span class="ico">${ico(z[3])}</span><b>${esc(z[1])}</b><small>${esc(z[2])}</small></a>`).join('')}</div>` : ''}
   ${secHead('Browse by subject', 'Every manual, saved web page and video')}<div id="shelves"><p class="loading">Loading…</p></div>
-  <p style="margin-top:20px"><a href="#/about">About this library and its sources</a>${IN_WINDOW ? ' · <a href="/ui/setup.html#manage">Library and local AI</a>' : ''}</p>`;
+  <p style="margin-top:20px"><a href="#/about">About this library and its sources</a>${ON_THIS_COMPUTER ? ' · <a href="/ui/setup.html#manage">Library and local AI</a> · <a href="/ui/wizard.html">Build your own library</a>' : ''}</p>`;
   try {
     const sh = await api('/api/shelves');
     $('#shelves').innerHTML = sh.filter(s => s.read + s.video).map(s => `<a class="shelfrow" href="#/shelf/${s.id}"><span><b>${esc(s.title)}</b><small>${s.read ? s.read.toLocaleString() + ' to read' : ''}${s.read && s.video ? ' · ' : ''}${s.video ? s.video.toLocaleString() + ' videos' : ''}</small></span>${ico('right')}</a>`).join('');

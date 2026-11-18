@@ -477,6 +477,10 @@
         const f = await ask('/api/setup/', 'finish', {});
         if (f && f.restart) return note('Close Lastbook and open it again: it will open on the new library.');
         say('Opening the library…');      // the app starts again on the new library; a build that is running carries on
+        if (!IN_WINDOW) for (let i = 0; i < 60; i++) {      // a browser tab: nothing loads the library's page for it, as the app's window does
+          await new Promise(f => setTimeout(f, 700));
+          try { if ((await fetch('/api/health', { cache: 'no-store' })).ok) return location.replace('/') } catch { }
+        }
       } catch (e) { note(e.message) }
     }
   }

@@ -559,10 +559,14 @@ class Shell:
             try:
                 folder = os.path.join(state, 'webkit-rules')
                 os.makedirs(folder, exist_ok=True)
-                stores.append(WebKit.WKContentRuleListStore.storeWithURL_(Foundation.NSURL.fileURLWithPath_isDirectory_(folder, True)))
+                url = Foundation.NSURL.fileURLWithPath_isDirectory_(folder, True)
+                stores.append(lambda: WebKit.WKContentRuleListStore.storeWithURL_(url))
             except Exception:
                 traceback.print_exc()
-        stores.append(WebKit.WKContentRuleListStore.defaultStore())
+        # Asked for only when it is used: asking at all makes ~/Library/WebKit/<app>/ContentRuleLists on this Mac, an empty
+        # folder with the app's name on it, which a library that travels must not leave behind (found by starting the
+        # packaged app from a drive and looking: the folder was there, with the rule list itself on the drive).
+        stores.append(lambda: WebKit.WKContentRuleListStore.defaultStore())
         return stores
 
     def switch_off_network(self):
@@ -580,7 +584,7 @@ class Shell:
             self.go_home()
 
         def attempt():
-            stores.pop(0).compileContentRuleListForIdentifier_encodedContentRuleList_completionHandler_('lastbook-no-network', NO_NETWORK, compiled)
+            stores.pop(0)().compileContentRuleListForIdentifier_encodedContentRuleList_completionHandler_('lastbook-no-network', NO_NETWORK, compiled)
 
         attempt()
 

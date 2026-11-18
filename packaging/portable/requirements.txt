@@ -1,0 +1,18 @@
+# The app that goes on a drive that travels (packaging/portable/build_portable.py), for CPython 3.12 on macOS arm64,
+# Windows x64 and Linux x64. The versions the fork's tests run against on the Mac it was written on.
+# No onnxruntime or tokenizers: keyword search only, as the Mac app.
+pyinstaller==6.22.3
+# Below 4: libzim 4.0.0 renamed getResults and getEstimatedMatches, which engine/library.py calls.
+libzim==3.13.1
+numpy==2.4.6
+beautifulsoup4==4.15.0
+pypdfium2==5.14.0
+# Maps of anywhere (engine/mapbuild): reads OpenStreetMap extracts. Without it the app builds libraries without maps.
+osmium==4.3.2
+# The window on a Mac (app/shell_macos.py)
+pyobjc-core==13.0; sys_platform == "darwin"
+pyobjc-framework-Cocoa==13.0; sys_platform == "darwin"
+pyobjc-framework-WebKit==13.0; sys_platform == "darwin"
+# The window on Windows (app/shell_windows.py), used where WebView2 is on the computer; the browser otherwise
+pythonnet==3.2.1; sys_platform == "win32"
+clr_loader==0.3.1; sys_platform == "win32"

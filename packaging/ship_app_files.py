@@ -68,6 +68,11 @@ def main():
             data.pop('_about', None)
         (out / 'content' / rel).write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding='utf-8')
         written.append(out / 'content' / rel)
+    regions = ROOT / 'content' / 'regions' / 'catalog.json'     # the regions of the world a map can be built of (engine/mapbuild/catalog.py): as it is
+    if regions.is_file():
+        (out / 'content' / 'regions').mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(regions, out / 'content' / 'regions' / 'catalog.json')
+        written.append(out / 'content' / 'regions' / 'catalog.json')
     bad = [str(EDITS['text'].keys() - used)] if EDITS['text'].keys() - used else []    # an edit that matched nothing: the guide changed, so look again
     for p in written:
         m = LEFT.search(p.read_text(encoding='utf-8', errors='replace'))

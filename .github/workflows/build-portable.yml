@@ -1,0 +1,189 @@
+# Builds what a drive that travels carries, for each kind of computer, and tries each one before it is kept.
+#
+#   tests      the fork's unit tests on macOS, Windows and Linux (none needs a library or the network)
+#   portable   bin/<os>-<arch>/ as a zip, for macOS arm64, Windows x64 and Linux x64: the app (PyInstaller) with
+#              llama-server inside, started on a made-up library and asked three questions (build_portable.py --smoke)
+#   android    Install-Android.apk
+#   kit        Lastbook-drive-kit.zip: the three apps, the launchers and the Android app, to unzip onto a drive
+#              (or: python packaging/portable/make_drive.py /path/to/drive --from each zip)
+#
+# Run by hand (Actions, "Portable drive", Run workflow), on a push to the fork's branch, and on a tag v*.
+# Nothing here is signed with a certificate: the Mac app is ad hoc signed, the Windows app is unsigned.
+#
+# This file was written on a Mac and has not yet been run. Until its first run is green, what it says of Windows and
+# Linux is what is intended, not what is known: see docs/PORTABLE-DRIVE.md.
+name: Portable drive
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [portable-worldwide]
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  LLAMA_TAG: b12032                                        # the build packaging/llm pins
+  LLAMA_COMMIT: dde879bc4f954b809892fd0d660515f42536394a
+
+jobs:
+  tests:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: What the app needs
+        run: python -m pip install --disable-pip-version-check -r packaging/portable/requirements.txt
+      - name: ffmpeg, for the tests that make videos smaller (they are skipped without it)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+      - name: Tests
+        shell: bash
+        run: >
+          python -B -m unittest
+          app.tests.test_readable app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_update
+          app.tests.test_address_search app.tests.test_topic_search app.tests.test_chat_steps app.tests.test_chat_tables app.tests.test_validate_topics
+          app.tests.test_libq app.tests.test_shell_macos app.tests.test_portable app.tests.test_wizard app.tests.test_regions
+          app.tests.test_mapbuild app.tests.test_ai app.tests.test_build app.tests.test_builder app.tests.test_browser
+          app.tests.test_drive
+
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, name: macos-arm64 }
+          - { os: windows-latest, name: windows-x64 }
+          - { os: ubuntu-22.04, name: linux-x64 }        # the oldest supported runner: what is built there runs on newer systems, not the other way round
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: What the app needs
+        run: python -m pip install --disable-pip-version-check -r packaging/portable/requirements.txt
+
+      # llama-server from source at the pinned build: one program with its libraries inside, no downloader in it.
+      # macOS: Metal. Windows and Linux: the processor, built for any x86-64 of the last ten years, not for the runner's own.
+      # If it does not build, the app is still made, without a model runner inside, and says so in BUILD.txt.
+      - name: llama-server
+        id: llama
+        continue-on-error: true
+        shell: bash
+        run: |
+          git -c advice.detachedHead=false clone -q --depth 1 --branch "$LLAMA_TAG" https://github.com/ggml-org/llama.cpp.git llama.cpp
+          test "$(git -C llama.cpp rev-parse HEAD)" = "$LLAMA_COMMIT"
+          cmake -S llama.cpp -B llama-build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_NATIVE=OFF -DGGML_CCACHE=OFF \
+            -DLLAMA_CURL=OFF -DLLAMA_OPENSSL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF -DLLAMA_BUILD_TOOLS=ON -DLLAMA_BUILD_SERVER=ON
+          cmake --build llama-build --config Release --target llama-server -j 4
+          mkdir llama-bin
+          find llama-build -type f \( -name llama-server -o -name llama-server.exe \) -exec cp {} llama-bin/ \;
+          cp llama.cpp/LICENSE llama-bin/LICENSE-llama.cpp.txt
+          printf 'llama-server from llama.cpp %s (%s), MIT licence: LICENSE-llama.cpp.txt.\nBuilt by GitHub Actions on %s.\n' "$LLAMA_TAG" "$LLAMA_COMMIT" "${{ matrix.os }}" > llama-bin/NOTICE.txt
+          ls -la llama-bin
+          ./llama-bin/llama-server --version || ./llama-bin/llama-server.exe --version
+
+      # Windows: the three files of Microsoft's WebView2 that the app's own window is made with, checked against the
+      # hashes packaging/build_app_windows.sh pins. If they cannot be had, the app is built to open in the browser.
+      - name: WebView2 files
+        id: webview2
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: bash
+        run: |
+          curl -fsSL -o wv2.zip https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.3856.49
+          mkdir wv2-all wv2 && unzip -q wv2.zip -d wv2-all
+          take() {   # the file of that name whose SHA-256 is the pinned one, wherever in the package it is
+            for f in $(find wv2-all -name "$2"); do
+              if [ "$(sha256sum "$f" | cut -d' ' -f1)" = "$1" ]; then cp "$f" wv2/; return 0; fi
+            done
+            echo "no $2 in the package has the pinned SHA-256" >&2; return 1
+          }
+          take 8219a3135436c147f8eb02fb831e99596103eebc18b6d7b794ca93f4c67018a2 Microsoft.Web.WebView2.Core.dll
+          take c48f8d729dc531288d2c53a6241effe7922ed1b947850b2442008a945c098c48 Microsoft.Web.WebView2.WinForms.dll
+          take eb5335edeaa6f2122c044e82aab2351dc8c9b4e0fe5e578c71922fb61be285e7 WebView2Loader.dll
+
+      - name: A made-up library to try the app on
+        shell: bash
+        run: python -B -c "import sys; sys.path[:0] = ['.', 'app', 'app/tests']; import buildkit; buildkit.write_pack('smoke/LastbookData')"
+
+      - name: Build, and try what was built
+        shell: bash
+        run: >
+          python -B packaging/portable/build_portable.py --out build --smoke smoke/LastbookData
+          ${{ steps.llama.outcome == 'success' && '--llama llama-bin' || '' }}
+          ${{ steps.webview2.outcome == 'success' && '--webview2 wv2' || '' }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lastbook-portable-${{ matrix.name }}
+          path: build/Lastbook-portable-${{ matrix.name }}.zip
+          if-no-files-found: error
+          compression-level: 0
+
+  android:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build the app
+        working-directory: mobile/android
+        run: ./gradlew --no-daemon assembleRelease
+      - name: Name it as it sits on a drive
+        run: cp mobile/android/app/build/outputs/apk/release/app-release.apk Install-Android.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Install-Android
+          path: Install-Android.apk
+          if-no-files-found: error
+
+  kit:
+    needs: [portable, android]
+    if: ${{ !cancelled() && needs.portable.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write          # to attach the kit to a release, on a tag
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Put a drive together
+        run: |
+          mkdir drive
+          args=""
+          for z in artifacts/Lastbook-portable-*.zip; do args="$args --from $z"; done
+          if [ -f artifacts/Install-Android.apk ]; then args="$args --apk artifacts/Install-Android.apk"; fi
+          python -B packaging/portable/make_drive.py drive $args
+          rm -rf drive/LastbookData        # the kit is unzipped onto a drive that has, or will have, its own
+          (cd drive && zip -q -r ../Lastbook-drive-kit.zip . -x '.metadata_never_index')
+          ls -la Lastbook-drive-kit.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lastbook-drive-kit
+          path: Lastbook-drive-kit.zip
+          compression-level: 0
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" Lastbook-drive-kit.zip --title "Lastbook portable ${GITHUB_REF_NAME}" --notes "The apps for a drive that travels: unzip onto a drive formatted exFAT, beside its LastbookData. See docs/PORTABLE-DRIVE.md." || gh release upload "${GITHUB_REF_NAME}" Lastbook-drive-kit.zip --clobber

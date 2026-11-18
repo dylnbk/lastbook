@@ -530,8 +530,17 @@
       const b = $('#open'); b.disabled = true; b.textContent = 'Opening your library…';
       const r = await call('finish', {}).catch(e => ({ error: e.message }));   // on {ok} the app relaunches itself into the library
       if (!r || r.error) { b.disabled = false; b.textContent = 'Open the library'; const n = $('#openNote'); n.hidden = false; n.textContent = (r && r.error) || 'The library did not open. Try again.' }
-      else live.textContent = 'Opening your library…';
+      else { live.textContent = 'Opening your library…'; if (r.restart) { const n = $('#openNote'); n.hidden = false; n.textContent = 'Close Lastbook and open it again: it will open on this library.' } else reopen() }
     };
+  }
+
+  /* In a browser tab (app/shell_browser.py) nothing loads the library's page when Lastbook has started again on it, as the app's own window does: this does. */
+  async function reopen() {
+    if (location.protocol === 'lastbook:' || location.hostname === 'lastbook.invalid') return;
+    for (let i = 0; i < 60; i++) {
+      await new Promise(f => setTimeout(f, 700));
+      try { if ((await fetch('/api/health', { cache: 'no-store' })).ok) return location.replace('/') } catch { }
+    }
   }
 
   /* keyboard: Escape closes a question that is open */
