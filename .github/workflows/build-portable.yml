@@ -187,4 +187,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" Lastbook-drive-kit.zip --title "Lastbook portable ${GITHUB_REF_NAME}" --notes "The apps for a drive that travels: unzip onto a drive formatted exFAT, beside its LastbookData. See docs/PORTABLE-DRIVE.md." || gh release upload "${GITHUB_REF_NAME}" Lastbook-drive-kit.zip --clobber
+        run: |
+          gh release create "${GITHUB_REF_NAME}" Lastbook-drive-kit.zip --title "Lastbook portable ${GITHUB_REF_NAME}" \
+            --notes "The apps for a drive that travels. Unzip onto a drive formatted exFAT, beside its LastbookData. See docs/PORTABLE-DRIVE.md." \
+            || gh release upload "${GITHUB_REF_NAME}" Lastbook-drive-kit.zip --clobber
