@@ -178,6 +178,9 @@ def main():
         counts = pack.get('counts') or {}
         what += f'  A library of {counts.get("documents", "?")} documents, {counts.get("encyclopedias", "?")} encyclopedias and {counts.get("videos", "?")} videos'
         what += f', made from Lastbook {str((pack.get("made_from") or {}).get("name") or pack.get("name") or "").capitalize()}.\n'
+        if counts.get('videos_pending'):
+            what += (f'  When this note was written, {counts["videos_pending"]} of the videos were still being made smaller by the computer building\n'
+                     '  the library. Until a video is done it is here by its words, and says so.\n')
         if pack.get('regions'):
             what += f'  Maps of {len(pack["regions"])} regions of the world, on the outline of every country.\n'
     except (OSError, ValueError):
