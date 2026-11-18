@@ -197,7 +197,10 @@ def memory(meta, size, ctx, extra=0):
     c = context_bytes(meta, ctx)
     if c is None or not size:
         return None
-    return int(size + extra + c + WORKING + 0.03 * size)
+    # Working room grows with the model. Measured on an Apple M4 (the fall in free memory, since graphics memory is not in the
+    # program's own count): Gemma 4 12B Q4_K_M at 16,384 tokens took about 10.1 GB; the weights, projector and context are 8.8 of
+    # it. With this, the estimate for it is 10.5: a little over, which is the side to err on.
+    return int(size + extra + c + WORKING + 0.15 * size)
 
 
 def best_context(meta, size, room, extra=0):

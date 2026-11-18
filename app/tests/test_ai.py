@@ -121,7 +121,7 @@ class Header(unittest.TestCase):
         ctx, need = gguf.best_context(meta, size, 13 * GiB)
         self.assertEqual(ctx, 16384)
         self.assertEqual(need, gguf.memory(meta, size, 16384))
-        ctx, _ = gguf.best_context(meta, size, int(4.3 * GiB))
+        ctx, _ = gguf.best_context(meta, size, int(4.6 * GiB))
         self.assertEqual(ctx, 12288)
         ctx, need = gguf.best_context(meta, size, 2 * GiB)
         self.assertIsNone(ctx)
@@ -219,12 +219,13 @@ class Found(Temp):
         f = models.judge(big, aikit.HW16)
         self.assertEqual((f['fits'], f['context']), (False, None))
         self.assertIn('would use about', f['why'])
-        near = dict(small, model_bytes=int(10.5 * GiB), bytes=int(10.5 * GiB))
+        near = dict(small, model_bytes=8 * GiB, bytes=8 * GiB)
         f = models.judge(near, aikit.HW16)
         self.assertTrue(f['fits'] and f['tight'])
         self.assertIn('close them', f['why'])
         self.assertEqual(models.judge(dict(small, model_bytes=6 * GiB), aikit.HW8)['fits'], False)
-        self.assertTrue(models.judge(dict(small, model_bytes=20 * GiB), aikit.HW_PC)['fits'])      # what goes on the graphics card is not in the computer's own memory
+        self.assertTrue(models.judge(dict(small, model_bytes=18 * GiB), aikit.HW_PC)['fits'])      # what goes on the graphics card is not in the computer's own memory
+        self.assertFalse(models.judge(dict(small, model_bytes=18 * GiB), aikit.HW16)['fits'])
         unknown = models.judge(small, dict(aikit.HW16, ram_bytes=None))
         self.assertIsNone(unknown['fits'])
         no_numbers = {'meta': {'general.architecture': 'odd'}, 'model_bytes': 4 * GiB, 'extra_bytes': 0, 'bytes': 4 * GiB}

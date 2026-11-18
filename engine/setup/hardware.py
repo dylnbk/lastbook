@@ -199,9 +199,14 @@ def available_ram():
             st.dwLength = ctypes.sizeof(st)
             return st.ullAvailPhys if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)) else None
         if name == 'macos':
-            # What vm_stat prints, asked of the kernel directly (host_statistics64, HOST_VM_INFO64): free, inactive (not used lately),
-            # speculative (read ahead) and purgeable pages can all be given up at once. The kernel's free_count already holds the
-            # speculative ones (vm_stat takes them out again to print "Pages free").
+            # The kernel's own answer first: kern.memorystatus_level is the share of memory it counts as available, the number
+            # memory_pressure prints and the one macOS itself acts on. It counts what is held only as a cache of files, which
+            # page counts miss: measured with a map build running, the level said 12.2 GB and free + inactive + purgeable said 6.2.
+            level, total = _sysctl('kern.memorystatus_level'), _sysctl('hw.memsize')
+            if level is not None and total and 0 < (level & 0xffffffff) <= 100:
+                return int(total * (level & 0xffffffff) / 100)
+            # Without it, what vm_stat prints, asked of the kernel directly (host_statistics64, HOST_VM_INFO64): free, inactive
+            # (not used lately) and purgeable pages. The kernel's free_count already holds the speculative ones.
             libc = ctypes.CDLL('/usr/lib/libc.dylib', use_errno=True)
             libc.mach_host_self.restype = ctypes.c_uint
             stats = _VmStatistics64()

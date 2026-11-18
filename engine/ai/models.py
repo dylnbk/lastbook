@@ -249,7 +249,8 @@ def judge(model, hw=None):
     if ctx is None:
         out['why'] = f'It would use about {_gb(need)} of memory, and this computer has {_gb(ram)} for everything.'
     else:
-        tight = need > 0.85 * room
+        # Measured: a model taking 10 of 13.5 GB of room answered a short question in 79 s with a map build running beside it. That is "little to spare".
+        tight = need > 0.7 * room
         out['tight'] = tight
         out['why'] = (f'Uses about {_gb(need)} of this computer’s {_gb(ram)} of memory while loaded'
                       + ('. That leaves little for other programs: close them before asking.' if tight else '.'))
