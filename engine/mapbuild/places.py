@@ -25,9 +25,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS place_fts USING fts5(name, detail, content='p
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 '''
 INSERT = 'INSERT INTO place(name,kind,detail,lat,lon,rank,source) VALUES (?,?,?,?,?,?,?)'
-PLACE_RANK = {'city': 1, 'town': 1, 'county': 2, 'region': 2, 'village': 2, 'suburb': 2, 'island': 2, 'hamlet': 3, 'locality': 3, 'farm': 3}
+PLACE_RANK = {'city': 1, 'town': 1, 'county': 2, 'region': 2, 'village': 2, 'suburb': 2, 'island': 2, 'peak': 2, 'hamlet': 3, 'locality': 3, 'farm': 3}
 PLACE_KIND = {'city': 'city', 'town': 'town', 'village': 'village', 'suburb': 'suburb or neighbourhood', 'hamlet': 'hamlet', 'locality': 'locality',
-              'island': 'island', 'farm': 'farm', 'county': 'county', 'region': 'region'}
+              'island': 'island', 'farm': 'farm', 'county': 'county', 'region': 'region', 'peak': 'summit'}
+HEIGHT = re.compile(r' \((-?[\d,]+) m\)$')
 STREETS = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'residential', 'unclassified', 'living_street', 'pedestrian'}
 # A road with no name is drawn with its number (M1, A 4, D 906, E 45;A1): a number runs the length of a country and is not a street to find.
 ROAD_NUMBER = re.compile(r'[A-Za-z]{0,4}[ -]?\d+[A-Za-z]?(\s*[;,/(].*)?')
@@ -75,15 +76,28 @@ def build(map_db, out, region_name, level='detail', postcodes=(), outline=None, 
     named = []
     for cls, name, g in src.execute("SELECT cls, name, geom FROM feat WHERE layer='place' AND name IS NOT NULL"):
         _, _, x, y = struct.unpack_from('<iiii', g)
-        named.append((cls, name, x / 1e6, y / 1e6))
-    towns = Towns([(name, lon, lat) for cls, name, lon, lat in named if cls in ('city', 'town')])
+        height = None
+        if cls == 'peak':           # 'Ben Nevis (1,345 m)': the height comes off the name and goes into the detail
+            m = HEIGHT.search(name)
+            if m:
+                name, height = name[:m.start()], m.group(1)
+        own, other = S.split_name(name)     # 'München (Munich)': found by either
+        named.append((cls, own, other, height, x / 1e6, y / 1e6))
+    # "near <town>" names the town as a reader of English would look for it, where the map has that name
+    towns = Towns([(other or own, lon, lat) for cls, own, other, _, lon, lat in named if cls in ('city', 'town')])
 
     def where(lon, lat, but=None):
         t = towns.near(lon, lat, but)
         return f'near {t}, {region_name}' if t else region_name
     db.execute('BEGIN')
-    for cls, name, lon, lat in named:
-        db.execute(INSERT, (name, PLACE_KIND.get(cls, cls), region_name if cls in ('city', 'town') else where(lon, lat, name), lat, lon, PLACE_RANK.get(cls, 3), 'OpenStreetMap'))
+    for cls, own, other, height, lon, lat in named:
+        base = region_name if cls in ('city', 'town') else where(lon, lat, other or own)
+        if height:
+            base = f'{height} m · {base}'
+        kind, rank = PLACE_KIND.get(cls, cls), PLACE_RANK.get(cls, 3)
+        db.execute(INSERT, (own, kind, f'{other} · {base}' if other else base, lat, lon, rank, 'OpenStreetMap'))
+        if other:
+            db.execute(INSERT, (other, kind, f'{own} · {base}', lat, lon, rank, 'OpenStreetMap'))
         n['places'] += 1
     for cls, name, lon, lat in src.execute("SELECT cls, name, lon, lat FROM poi WHERE name IS NOT NULL AND name<>''"):
         db.execute(INSERT, (name, POI_LABEL.get(cls, cls.replace('_', ' ')), where(lon, lat), lat, lon, 4, 'OpenStreetMap'))

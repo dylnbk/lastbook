@@ -24,12 +24,17 @@ and a build that stops leaves the map that was there before.
 
 There are two levels:
 
-- **detail**: every street and path, buildings, land use, railways, streams, and every help point. For a country or a
-  state. Elevation to about 30 m (zoom 12): relief, contours and 3D.
+- **detail**: every street and path, buildings, land use, railways, streams, every named summit, and every help
+  point. For a country or a state. Elevation to about 30 m (zoom 12): relief, contours and 3D.
 - **overview**: what a whole continent can carry. Main roads (motorway to tertiary), railways, rivers and lakes,
-  built-up areas, cities to villages, and still **every help point that has a layer** (hospitals, pharmacies, fire
-  and police stations, water, fuel, food shops, shelters, defibrillators). Elevation to about 90 m (zoom 9): relief
-  only.
+  built-up areas and the great woods, cities to villages, the summits the world knows, and still **every help point
+  that has a layer** (hospitals, pharmacies, fire and police stations, water, fuel, food shops, shelters,
+  defibrillators). Its shapes are drawn to about 40 m. Elevation to about 90 m (zoom 9): relief only.
+
+Both carry ferry routes (how to cross the water) and country borders. A place is named as its own country writes it,
+with the English name after it where that is another word: `München (Munich)`, `Αθήνα (Athens)`. Road signs say the
+first; a reader of English looks for the second, and the place finder answers to either. A help point mapped as
+closed (`disused`, `abandoned`) is left out: a closed hospital is worse than no hospital.
 
 Where a detailed region and an overview cover the same ground, the detailed one is drawn, and the overview's help
 points there are left out so nothing is counted twice.
@@ -54,12 +59,28 @@ A region's name is Geofabrik's: the 554 extracts it publishes, from continents d
 the larger countries (`us/california`, `germany/bayern` is `bayern`). `content/regions/catalog.json` is the short
 list the app ships so regions can be chosen with no connection; `--write-catalog` refreshes it.
 
-Measured on an Apple M4, reading from and writing to an external SSD:
+Measured on an Apple M4, reading from and writing to an external SSD (the first build of each, which also fetched
+its elevation at 3 MB/s):
 
-| Region | Level | Extract | Time | Size |
-|---|---|---|---|---|
-| Isle of Man | detail | 6 MB | 14 s | 19 MB |
-| Guernsey and Jersey | detail | 4 MB | 75 s (most of it fetching elevation) | 13 MB |
+| Region | Level | Extract | Time | Size | Holds |
+|---|---|---|---|---|---|
+| Isle of Man | detail | 6 MB | 14 s | 19 MB | 77,000 features, 585 help points |
+| Ireland and Northern Ireland | detail | 418 MB | 10 min | 1.4 GB | 6.5 million features, 38,600 help points, 114,000 streets, 49,000 postcodes |
+| Great Britain | detail | 2.2 GB | 62 min | 6.6 GB | 29.3 million features, 252,000 help points, 953,000 streets, 1.78 million postcodes |
+| Bulgaria | overview | 178 MB | 1 min | 43 MB | 70,000 features, 27,000 help points |
+| Norway | overview | 1.3 GB | 10 min | 450 MB | its coast is most of it |
+
+Great Britain's hour included about fifteen minutes lost to a mistake of mine (a large AI model loaded beside it).
+
+`--skip-built` leaves a region alone only if this version of the builder made it: when the builder learns to draw
+something new, regions made before are made again.
+
+**Zoomed-out tiles.** A tile that takes in half a country is the slowest thing the map does: 2.6 s at zoom 5 and
+7.6 s at zoom 8 over Great Britain. The app keeps each once made, so only the first look is slow.
+`tools/warm_region_tiles.py` takes that first look ahead of time. Run it after regions are added or rebuilt.
+
+**Regions on a drive of their own.** `LASTBOOK_REGIONS=/path/to/regions` reads them from another folder than the
+library's.
 
 ## Where the data comes from
 
@@ -107,6 +128,13 @@ Outside every region the coarse outline is all there is. The note under the map 
   miles" in the Layers panel switches back.
 - Four kinds of help point were added because they matter outside the US and in an emergency: wells and water
   pumps, defibrillators, ambulance stations and emergency assembly points.
+- **Borders are drawn where the way itself says whose it is** (`admin_level` on the way). Most of Europe's do. Where
+  only the boundary's relation says, the border is not drawn. Lines at sea marking territorial waters are left out.
+- **A summit is a point with a name.** A mountain mapped as a range or a massif (Olympus, as opposed to its highest
+  point, Mytikas) is not found.
+- **Help points are as OpenStreetMap has them.** Near Charing Cross the nearest "police" is a disused police box
+  mapped as a station, and two private clinics are mapped as hospitals. The map says where things were mapped, not
+  what they are worth.
 
 ## One thing learned the hard way
 

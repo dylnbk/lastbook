@@ -44,7 +44,9 @@ WEB = APP / 'web'
 CACHE = HERE / 'derived' / 'cache'
 MAPDB = HERE / 'derived' / 'geo' / 'map.sqlite'
 PLACEDB = HERE / 'derived' / 'geo' / 'places.sqlite'
-ATLAS = regions.Atlas(HERE / 'derived' / 'geo' / 'regions')   # maps of anywhere, one folder each (engine/regions.py); empty when there are none
+# Maps of anywhere, one folder each (engine/regions.py); empty when there are none. LASTBOOK_REGIONS names another folder to
+# read them from: maps kept on a drive of their own, beside a library that lives elsewhere.
+ATLAS = regions.Atlas(os.environ.get('LASTBOOK_REGIONS') or HERE / 'derived' / 'geo' / 'regions')
 os.environ.setdefault('SURVIVAL_DISABLE_INDEX_WATCH', '1')
 import engine.library as library  # noqa: E402  (provides Handler, search DB path, ZIM reader)
 import retrieval, assistant  # noqa: E402
@@ -1479,14 +1481,35 @@ def places(q, limit=20, near=None):
             size[k] = 2 if hit[0] is None else hit[0]
         return size[k]
     home = near or home_area()
-    rows.sort(key=lambda r: (norm(r[0]) != ql, not norm(r[0]).startswith(ql), r[5] > 2 and norm(r[0]) == ql and importance(r),
-                             -round(near_bonus(home, r[3], r[4])), r[5]))
+
+    def named_first(r):
+        """(words of the question that are exactly this place's name, are the rest in its description): 'abbey road london'
+        is first of all a street called Abbey Road, best one whose description says London; before it, anything merely
+        starting with the same letters ('Abbeyfield Road')."""
+        n = norm(r[0])
+        if not n or not (n == ql or ql.startswith(n + ' ')):
+            return 0, False
+        rest = ql[len(n):].split()
+        return len(n.split()), bool(rest) and all(w in norm(r[2] or '') for w in rest)
+    # A question that goes on past a name ("abbey road london") found nothing called that in the first search if nothing in it
+    # is named by the question's opening words: look again for the name alone.
+    if len(ql.split()) > 1 and not any(named_first(r)[0] for r in rows):
+        for k in range(len(ql.split()) - 1, 0, -1):
+            more, _ = search(' '.join(ql.split()[:k]))
+            more = [r for r in more if norm(r[0]) == ' '.join(ql.split()[:k])]
+            if more:
+                rows = more + rows
+                break
+    rows.sort(key=lambda r: (norm(r[0]) != ql, -named_first(r)[0], not named_first(r)[1] if named_first(r)[0] else False, not norm(r[0]).startswith(ql),
+                             r[5] > 2 and norm(r[0]) == ql and importance(r), -round(near_bonus(home, r[3], r[4])), r[5]))
     seen, out = set(), []
     for name, kind, detail, lat, lon, rank, src in rows:
         k = (name.lower(), round(lat, 2), round(lon, 2))
-        if k in seen:
+        spot = (kind, round(lat, 5), round(lon, 5))     # one place under two names ('München', 'Munich'): the one the question matched best is enough
+        if k in seen or spot in seen:
             continue
         seen.add(k)
+        seen.add(spot)
         out.append({'name': name, 'kind': kind, 'detail': detail, 'lat': lat, 'lon': lon, 'source': src,
                     'onMap': bool(pack_info()) or 32.5 < lat < 35.9 and -121.4 < lon < -114.1 or ATLAS.contains(lon, lat)})
         if len(out) >= limit:

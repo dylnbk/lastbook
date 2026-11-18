@@ -37,6 +37,13 @@ NODES = [
     (34, -4.5220, 54.2140, None), (35, -4.5180, 54.2140, None), (36, -4.5180, 54.2160, None), (37, -4.5220, 54.2160, None),  # the island in it
     (40, -4.4900, 54.1900, None), (41, -4.4890, 54.1900, None), (42, -4.4890, 54.1910, None), (43, -4.4900, 54.1910, None),  # a clinic's building
     (50, -4.6000, 54.1000, None), (51, -4.3000, 54.4000, None),
+    (60, -4.4500, 54.2600, {'natural': 'peak', 'name': 'Test Fell', 'ele': '621'}),
+    (61, -4.4600, 54.2700, {'natural': 'peak', 'name': 'Μύτικας', 'name:en': 'Mytikas', 'ele': '2,917 m', 'wikidata': 'Q1'}),
+    (62, -4.4700, 54.2800, {'natural': 'peak', 'ele': '300'}),                                                               # no name: nothing to find
+    (63, -4.5014, 54.2010, {'amenity': 'pharmacy', 'name': 'Old Pharmacy', 'disused': 'yes'}),
+    (64, -4.5015, 54.2011, {'place': 'village', 'name': 'München', 'name:en': 'Munich'}),
+    (65, -4.5016, 54.2012, {'place': 'village', 'name': 'Zürich', 'name:en': 'Zurich'}),
+    (70, -4.7000, 54.0500, None), (71, -4.9000, 54.0000, None),
 ]
 WAYS = [
     (100, [10, 11, 12], {'highway': 'residential', 'name': 'High Street'}),
@@ -50,6 +57,11 @@ WAYS = [
     (108, [10, 11], {'railway': 'rail'}),
     (109, [10, 12], {'waterway': 'stream', 'name': 'Test Burn'}),
     (110, [50, 51], {'highway': 'proposed'}),                                  # not a road yet
+    (111, [70, 71], {'route': 'ferry', 'name': 'Testby to Elsewhere'}),
+    (112, [50, 51], {'boundary': 'administrative', 'admin_level': '2'}),
+    (113, [10, 12], {'boundary': 'administrative', 'admin_level': '4'}),
+    (114, [70, 71], {'boundary': 'administrative', 'admin_level': '2', 'maritime': 'yes'}),      # the edge of territorial waters: not drawn
+    (115, [10, 11], {'boundary': 'administrative', 'admin_level': '8'}),                         # a parish
 ]
 RELATIONS = [(200, [(103, 'outer'), (104, 'inner')], {'type': 'multipolygon', 'natural': 'water', 'name': 'Loch Test'})]
 
@@ -82,19 +94,22 @@ class Extract(Temp):
         self.assertEqual(roads, {'residential': 'High Street', 'motorway': 'M1', 'footway': None})
         self.assertEqual(rows(out, "SELECT COUNT(*) FROM feat WHERE layer='bldg'"), [(2,)])
         self.assertEqual(rows(out, "SELECT cls, name FROM feat WHERE layer='rail'"), [('rail', None)])
-        self.assertEqual(rows(out, "SELECT cls, name FROM feat WHERE layer='waterway'"), [('stream', 'Test Burn')])
+        self.assertEqual(sorted(rows(out, "SELECT cls, name FROM feat WHERE layer='waterway'")), [('ferry', 'Testby to Elsewhere'), ('stream', 'Test Burn')])
+        self.assertEqual(sorted(rows(out, "SELECT cls, minz FROM feat WHERE layer='border'")), [('country', 4), ('region', 7)])     # not the line at sea, not the parish
         lake = rows(out, "SELECT cls, name, geom FROM feat WHERE layer='water'")
         self.assertEqual([r[:2] for r in lake], [('water', 'Loch Test')])
         self.assertEqual([len(p) for p in schema.unpack(lake[0][2])], [5, 5])          # the shore, and the island as a hole in it
         places = {name: (cls, minz) for cls, name, minz in rows(out, "SELECT cls, name, minz FROM feat WHERE layer='place'")}
-        self.assertEqual(places, {'Testby': ('town', 9), 'Nether Test': ('hamlet', 14), 'Bigton': ('city', 5)})   # a capital shows from far out
+        self.assertEqual(places, {'Testby': ('town', 9), 'Nether Test': ('hamlet', 14), 'Bigton': ('city', 5),      # a capital shows from far out
+                                  'Test Fell (621 m)': ('peak', 11), 'Μύτικας (Mytikas) (2,917 m)': ('peak', 9),      # summits, the highest from furthest out
+                                  'München (Munich)': ('village', 11), 'Zürich': ('village', 11)})                   # its own name, and the English one where that is another word
         pois = sorted(rows(out, 'SELECT cls, name FROM poi'), key=str)
         self.assertEqual(pois, [('clinic', 'Harbour Clinic'), ('defibrillator', None), ('hospital', 'Testby General'), ('toilet', None)])
         clinic = rows(out, "SELECT lon, lat FROM poi WHERE cls='clinic'")[0]
         self.assertAlmostEqual(clinic[0], -4.4895, places=4)                           # the middle of its building
         self.assertAlmostEqual(clinic[1], 54.1905, places=4)
         self.assertEqual(made['unreadable'], 1)                                        # the way with a node missing
-        self.assertEqual((made['roads'], made['buildings'], made['pois'], made['places']), (3, 2, 4, 3))
+        self.assertEqual((made['roads'], made['buildings'], made['pois'], made['places']), (3, 2, 4, 7))     # the pharmacy mapped as closed is not a help point
         self.assertGreater(made['cells'], 0)
         self.assertEqual(rows(out, 'SELECT COUNT(*) FROM cover')[0][0], made['cells'])
         meta = dict(rows(out, 'SELECT key, value FROM meta'))
@@ -106,8 +121,11 @@ class Extract(Temp):
     def test_an_overview_keeps_what_a_continent_can_carry(self):
         out, made = self.read('overview')
         self.assertEqual(rows(out, "SELECT cls, name FROM feat WHERE layer='road'"), [('motorway', 'M1')])
-        self.assertEqual(rows(out, "SELECT COUNT(*) FROM feat WHERE layer IN ('bldg', 'waterway')"), [(0,)])
-        self.assertEqual(sorted(r[0] for r in rows(out, "SELECT name FROM feat WHERE layer='place'")), ['Bigton', 'Testby'])
+        self.assertEqual(rows(out, "SELECT COUNT(*) FROM feat WHERE layer='bldg'"), [(0,)])
+        self.assertEqual(rows(out, "SELECT cls FROM feat WHERE layer='waterway'"), [('ferry',)])                              # how to cross the water; not the stream
+        self.assertEqual(rows(out, "SELECT cls FROM feat WHERE layer='border'"), [('country',)])
+        self.assertEqual(sorted(r[0] for r in rows(out, "SELECT name FROM feat WHERE layer='place'")),
+                         ['Bigton', 'München (Munich)', 'Testby', 'Zürich', 'Μύτικας (Mytikas) (2,917 m)'])                  # the summit the world knows; not every fell
         self.assertEqual(sorted(r[0] for r in rows(out, 'SELECT cls FROM poi')), ['clinic', 'defibrillator', 'hospital'])     # every help point with a layer; not the toilet
         self.assertEqual(rows(out, "SELECT name FROM feat WHERE layer='water'"), [('Loch Test',)])
         self.assertEqual(made['cells'], 0)                                             # an overview claims no ground as its own
@@ -203,7 +221,10 @@ class Whole(Temp):
         self.assertEqual(sorted(p.name for p in (root / 'testland').iterdir()), ['map.sqlite', 'places.sqlite', 'region.json', 'terrain.sqlite'])
         self.assertEqual(json.loads((root / 'testland' / 'region.json').read_text()), info)
         self.assertEqual((info['id'], info['name'], info['level'], info['iso'], info['box']), ('testland', 'Testland', 'detail', ['TL'], [-4.8, 53.9, -4.1, 54.6]))
-        self.assertEqual(info['counts']['finder'], {'places': 3, 'points': 2, 'streets': 1, 'postcodes': 1})
+        self.assertEqual(info['counts']['finder'], {'places': 7, 'points': 2, 'streets': 1, 'postcodes': 1})
+        self.assertEqual(info['builder'], build.BUILDER)
+        self.assertTrue(b.current('testland', 'detail'))
+        self.assertFalse(b.current('testland', 'overview'))
         self.assertEqual(info['counts']['coast']['ocean'], 1)
         self.assertGreater(info['counts']['terrain']['tiles'], 0)
         self.assertEqual(len(info['credits']), 4)
@@ -215,7 +236,7 @@ class Whole(Temp):
         self.assertTrue(atlas.contains(-4.5, 54.2))
         self.assertFalse(atlas.contains(-3.0, 54.2))
         layers = {row[0] for row in atlas.rows(15, -4.52, 54.19, -4.48, 54.21)}
-        self.assertEqual(layers, {'road', 'bldg', 'place', 'ocean', 'island', 'rail', 'waterway', 'water'})
+        self.assertEqual(layers, {'road', 'bldg', 'place', 'ocean', 'island', 'rail', 'waterway', 'water', 'border'})
         self.assertTrue(atlas.covered(-4.5, 54.2))
         self.assertIsNotNone(atlas.terrain(9, 249, 163))
         found = sqlite3.connect(root / 'testland' / 'places.sqlite')

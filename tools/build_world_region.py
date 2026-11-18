@@ -9,7 +9,7 @@
   python tools/build_world_region.py --remove france
   python tools/build_world_region.py --write-catalog                    refresh content/regions/catalog.json from Geofabrik
 
-  --skip-built       leave alone a region already built at this level
+  --skip-built       leave alone a region already built at this level by this version of the builder
   --only-fetched     build only regions whose extract is already in the sources folder (nothing large is downloaded)
   --data FOLDER      the LastbookData folder to build into (default: the one this copy uses)
   --sources FOLDER   where downloads are kept between builds (default: .lastbook/map-sources beside the library)
@@ -99,8 +99,7 @@ def main():
     level = 'overview' if a.overview else 'detail'
     failed = []
     for i, w in enumerate(wanted, 1):
-        was = b.built(w)
-        if a.skip_built and was and was.get('level') == level:
+        if a.skip_built and b.current(w, level):
             say(f'[{i}/{len(wanted)}] {w}: already built')
             continue
         if a.only_fetched and not all(b.src.have(f'geofabrik/{p.folder}.osm.pbf') for p in cat.parts(w)):

@@ -50,6 +50,9 @@ OVERVIEW_LAND = {'res', 'com', 'ind', 'green', 'park'}
 WATER = {('natural', 'water'): 'water', ('landuse', 'reservoir'): 'reservoir', ('landuse', 'basin'): 'reservoir', ('waterway', 'riverbank'): 'river',
          ('waterway', 'dock'): 'dock', ('natural', 'glacier'): 'glacier'}
 WATERWAY_Z = {'river': 10, 'canal': 12, 'stream': 13}
+FERRY_Z = 7             # a ferry's route, drawn in the 'waterway' layer as class 'ferry'
+# Borders, from the ways that carry them: admin_level 2 is a country's, 4 a state's or a nation's within one (England and Scotland).
+BORDER = {'2': ('country', 4), '4': ('region', 7)}
 RAIL_Z = {'rail': 10, 'light_rail': 13, 'subway': 13, 'tram': 14, 'narrow_gauge': 13}
 
 # Help points: (key, value) -> class. The classes are those server.HELP names and web/map.js has layers for, with four added
@@ -78,7 +81,13 @@ OVERVIEW_POI = {'hospital', 'clinic', 'doctors', 'dentist', 'pharmacy', 'chemist
                 'defibrillator', 'ambulance_station', 'assembly_point'}
 
 
+GONE = ('disused', 'abandoned', 'demolished', 'removed', 'razed')
+
+
 def poi_class(tags):
+    for word in GONE:           # mapped as no longer there: a closed hospital is worse than no hospital
+        if tags.get(word) == 'yes':
+            return None
     for key in POI_KEYS:
         v = tags.get(key)
         if v is None:
@@ -112,6 +121,55 @@ def water_class(tags):
             if cls:
                 return cls
     return None
+
+
+def _plain(text):
+    """Letters only, without their accents, in lower case: 'Zürich' and 'Zurich' are the same name."""
+    import unicodedata
+    return ''.join(c for c in unicodedata.normalize('NFKD', text.lower()) if c.isalnum() and not unicodedata.combining(c))
+
+
+def place_name(tags):
+    """A place's name as its own country writes it, with the English one after it in brackets where that is another word:
+    'München (Munich)', 'Αθήνα (Athens)'. Road signs there say the first; a person who reads English looks for the second.
+    Names that differ only by accents ('Zürich', 'Zurich') are given once."""
+    name, en = tags.get('name'), tags.get('name:en') or tags.get('int_name')
+    if not name:
+        return en or None
+    if en and _plain(en) != _plain(name) and '(' not in name and len(en) <= 60:
+        return f'{name} ({en})'
+    return name
+
+
+def split_name(label):
+    """'München (Munich)' -> ('München', 'Munich'); 'Leeds' -> ('Leeds', None). The reverse of place_name, for the place finder."""
+    if label.endswith(')') and ' (' in label:
+        own, _, other = label[:-1].rpartition(' (')
+        if own and other:
+            return own, other
+    return label, None
+
+
+def peak_z(ele):
+    """The zoom a summit's name appears at: the highest from furthest out."""
+    if ele is None:
+        return 13
+    return 9 if ele >= 2500 else 10 if ele >= 1000 else 11 if ele >= 600 else 12
+
+
+def metres(text):
+    """An OpenStreetMap ele tag as a number of metres, or None: '1345', '1345 m', '1,345', '1345.2'; feet are converted."""
+    if not text:
+        return None
+    t = text.strip().lower().replace(',', '')
+    feet = t.endswith(('ft', "'", 'feet'))
+    t = t.rstrip("abcdefghijklmnopqrstuvwxyz' ")
+    try:
+        v = float(t)
+    except ValueError:
+        return None
+    v = v * 0.3048 if feet else v
+    return v if -500 < v < 9000 else None
 
 
 def cell(lon, lat):

@@ -18,6 +18,11 @@ from . import catalog as catalogs
 from . import geom, sources
 from . import schema as S
 
+# What this code makes of an extract. It goes up when a region built before would come out different now (new kinds of thing
+# on the map, names written another way), so "leave alone what is already built" does not leave an older making in place.
+#   2: summits, ferry routes, borders; a place's English name beside its own; help points mapped as closed left out;
+#      an overview's shapes drawn more simply and only its great woods kept.
+BUILDER = 2
 FULL_POSTCODES = {'GB': 'GB_full.csv.zip', 'NL': 'NL_full.csv.zip', 'CA': 'CA_full.csv.zip'}     # GeoNames' fuller files, where it has them
 BIG_PBF = 300 << 20         # above this, where nodes are is kept in a file rather than in memory
 
@@ -69,6 +74,11 @@ class Builder:
         except (OSError, ValueError):
             return None
 
+    def current(self, rid, level):
+        """Is the region here, at this level, made by this code as it is now?"""
+        was = self.built(rid)
+        return bool(was) and was.get('level') == level and was.get('builder') == BUILDER
+
     def remove(self, rid):
         folder = self.root / catalogs.folder_id(rid)
         if folder.is_dir():
@@ -108,7 +118,7 @@ class Builder:
                 left.unlink(missing_ok=True)
         say(f'  map: {counts["features"]:,} features, {counts["pois"]:,} help points in {counts["seconds"]:.0f}s')
         info = {'id': entry.folder, 'geofabrik': entry.id, 'name': entry.name, 'level': level, 'parent': entry.parent,
-                'box': [round(v, 5) for v in entry.box], 'iso': self.catalog.iso_of(entry.id), 'schema': 1,
+                'box': [round(v, 5) for v in entry.box], 'iso': self.catalog.iso_of(entry.id), 'schema': 1, 'builder': BUILDER,
                 'data_as_of': counts['data_as_of'], 'counts': dict(counts), 'credits': [sources.CREDITS['osm']],
                 'sources': {'osm': [self.src.source_note(f'geofabrik/{p.folder}.osm.pbf') for p in parts]},
                 'outline': [[[[round(x, 4), round(y, 4)] for x, y in geom.simplify_ring(ring, 0.01)] for ring in poly] for poly in entry.outline]}

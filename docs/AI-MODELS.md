@@ -73,13 +73,13 @@ five times too large.
 
 | Model | Context | Estimated | Measured |
 |---|---|---|---|
-| Qwen3-VL 4B Q4_K_M (2.5 GB file) with its projector (0.84 GB) | 8,192 | 5.5 GB | 4.4 GB, the program's own count |
+| Qwen3-VL 4B Q4_K_M (2.5 GB file) with its projector (0.84 GB) | 8,192 | 5.2 GB | 4.3 GB, the program's own count |
 | Gemma 4 12B Q4_K_M (7.4 GB file) with its projector (0.12 GB) | 16,384 | 9.8 GB | about 10.1 GB, by the fall in free memory |
 
 Memory here is in the units a computer's label uses (a "16 GB" Mac). Two measurements on one computer. The second
 is the more telling: on a Mac the model sits in graphics memory, which the program's own count leaves out (it showed
 2.7 GB), so what it took was read from how far free memory fell while it loaded, and a map build was running at the
-time. The working-room term was set from it. For the small model the estimate is 1 GB high, which is the side to
+time. The working-room term was set from it. For the small model the estimate is 0.9 GB high, which is the side to
 err on.
 
 The same Gemma, fitting, answered a one-sentence question from a 2,500-token source in 79 seconds with that build

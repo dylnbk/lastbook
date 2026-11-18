@@ -285,6 +285,27 @@ class Finder(Temp):
         self.assertIsNone(f('12 34'))
         self.assertIsNone(f(''))
 
+    def test_a_name_then_where_finds_the_thing_called_that(self):
+        feats = [('place', 'city', 'London', 5, 30, [[-0.1276, 51.5073]]), ('place', 'town', 'Leeds', 9, 30, [[-1.5491, 53.8008]]),
+                 ('road', 'residential', 'Abbey Road', 13, 30, [[-0.1830, 51.5370, -0.1790, 51.5320]]),
+                 ('road', 'residential', 'Abbey Road', 13, 30, [[-1.60, 53.83, -1.59, 53.82]]),
+                 ('road', 'residential', 'Abbeyfield Road', 13, 30, [[-0.05, 51.49, -0.049, 51.489]]),
+                 ('place', 'peak', 'Ben Nevis (1,345 m)', 10, 30, [[-5.0036, 56.7969]]),
+                 ('road', 'residential', 'Ben Nevis Way', 13, 30, [[-2.1, 52.45, -2.09, 52.45]]),
+                 ('place', 'city', 'München (Munich)', 6, 30, [[11.575, 48.137]])]
+        regionkit.make_region(self.root, 'gb', name='Great Britain', feats=feats, pois=[])
+        self.serve()
+        got = server.places('Abbey Road, London')
+        self.assertEqual((got[0]['name'], got[0]['detail']), ('Abbey Road', 'near London, Great Britain'))     # not Abbeyfield Road, which only starts the same
+        self.assertEqual([p['name'] for p in got], ['Abbey Road', 'Abbeyfield Road'])                          # which is still offered, after it
+        self.assertEqual(server.places('Abbey Road Leeds')[0]['detail'], 'near Leeds, Great Britain')
+        self.assertEqual([p['detail'] for p in server.places('Abbey Road', near=(53.8, -1.55))][:2], ['near Leeds, Great Britain', 'near London, Great Britain'])   # with no town named: the nearer first
+        got = server.places('Ben Nevis')
+        self.assertEqual((got[0]['name'], got[0]['kind'], got[0]['detail']), ('Ben Nevis', 'summit', '1,345 m · Great Britain'))     # the mountain before the street named after it
+        got = server.places('munich')
+        self.assertEqual([(p['name'], p['detail']) for p in got], [('Munich', 'München · Great Britain')])     # one place, under the name that was asked for
+        self.assertEqual(server.places('münchen')[0]['name'], 'München')
+
     def test_us_addresses_are_still_asked_of_the_address_index_first(self):
         island(self.root)
         self.serve()
@@ -735,6 +756,31 @@ class Packed(unittest.TestCase):
             self.assertIn(cls + ':', page.split('const ROAD =')[1].split('const roadStyle')[0], cls)
         for cls in set(schema.LAND.values()):
             self.assertRegex(page.split('const C =')[1].split('const ROAD')[0], r'\b%s:' % cls)
+
+    def test_a_place_is_named_as_its_country_writes_it_and_as_english_does(self):
+        f = schema.place_name
+        self.assertEqual(f({'name': 'München', 'name:en': 'Munich'}), 'München (Munich)')
+        self.assertEqual(f({'name': 'Αθήνα', 'name:en': 'Athens'}), 'Αθήνα (Athens)')
+        self.assertEqual(f({'name': 'Zürich', 'name:en': 'Zurich'}), 'Zürich')               # the same name but for its accents
+        self.assertEqual(f({'name': 'Leeds', 'name:en': 'Leeds'}), 'Leeds')
+        self.assertEqual(f({'name': 'Leeds'}), 'Leeds')
+        self.assertEqual(f({'name:en': 'Somewhere'}), 'Somewhere')
+        self.assertEqual(f({'name': 'Wien', 'int_name': 'Vienna'}), 'Wien (Vienna)')
+        self.assertEqual(f({'name': 'Newport (Gwent)', 'name:en': 'Newport'}), 'Newport (Gwent)')       # brackets of its own: left as it is
+        self.assertIsNone(f({}))
+        self.assertEqual(schema.split_name('München (Munich)'), ('München', 'Munich'))
+        self.assertEqual(schema.split_name('Leeds'), ('Leeds', None))
+        self.assertEqual(schema.split_name('(odd)'), ('(odd)', None))
+
+    def test_heights_and_what_is_no_longer_there(self):
+        for text, want in (('1345', 1345), ('1,345 m', 1345), ('1345.2', 1345.2), ('4413 ft', 4413 * 0.3048), ('621m', 621), ('', None), ('high', None), ('99999', None), (None, None)):
+            got = schema.metres(text)
+            self.assertEqual(got if got is None else round(got, 1), want if want is None else round(want, 1), text)
+        self.assertEqual([schema.peak_z(e) for e in (3000, 1345, 621, 200, None)], [9, 10, 11, 12, 13])
+        self.assertIsNone(schema.poi_class({'amenity': 'hospital', 'disused': 'yes'}))
+        self.assertIsNone(schema.poi_class({'amenity': 'pharmacy', 'abandoned': 'yes'}))
+        self.assertEqual(schema.poi_class({'amenity': 'hospital', 'disused': 'no'}), 'hospital')
+        self.assertEqual(schema.BORDER['2'][0], 'country')
 
     def test_a_shape_appears_when_it_is_big_enough_to_see(self):
         self.assertEqual(schema.area_z(0, 10, 0, 10, 7), 7)          # a region-sized lake: from the first zoom allowed

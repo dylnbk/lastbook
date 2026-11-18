@@ -17,7 +17,7 @@ from engine import sqlitefs
 from . import schema as S
 
 DETAIL_KEYS = ('highway', 'railway', 'waterway', 'natural', 'landuse', 'leisure', 'amenity', 'shop', 'man_made', 'tourism', 'emergency',
-               'healthcare', 'place', 'building', 'boundary')
+               'healthcare', 'place', 'building', 'boundary', 'route')
 AREA_KEYS = ('natural', 'landuse', 'leisure', 'amenity', 'waterway', 'boundary', 'building', 'shop', 'tourism', 'man_made', 'healthcare')
 BATCH = 40000
 PROTECTED = {'national_park', 'protected_area'}
@@ -61,7 +61,8 @@ def _wkb_parts(b, o=0):
 def _overview_filter(osmium):
     """Every (key, value) an overview keeps, as one filter: an object with any of them passes."""
     pairs = [('highway', v) for v in S.OVERVIEW_ROADS]
-    pairs += [('railway', 'rail'), ('waterway', 'river'), ('waterway', 'canal'), ('natural', 'wetland'), ('natural', 'beach')]
+    pairs += [('railway', 'rail'), ('waterway', 'river'), ('waterway', 'canal'), ('natural', 'wetland'), ('natural', 'beach'),
+              ('natural', 'peak'), ('natural', 'volcano'), ('route', 'ferry'), ('boundary', 'administrative')]
     pairs += [('place', v) for v in S.OVERVIEW_PLACES] + [('place', k) for k, v in S.PLACE_AS.items() if v in S.OVERVIEW_PLACES]
     pairs += [k for k, cls in S.LAND.items() if cls in S.OVERVIEW_LAND] + list(S.WATER)
     pairs += [k for k, cls in S.POI.items() if cls in S.OVERVIEW_POI]
@@ -175,9 +176,17 @@ def build(pbf, out, level='detail', buildings=True, node_index=None, progress=No
         try:
             if o.is_node():
                 place = tags.get('place')
+                if place is None and tags.get('natural') in ('peak', 'volcano'):
+                    # A named summit is a place to find and to steer by. An overview keeps the ones the world knows (those with an
+                    # entry in Wikidata) and the very high; a detailed region keeps every one that has a name.
+                    label, ele = S.place_name(tags), S.metres(tags.get('ele'))
+                    if label and (detail or 'wikidata' in tags or (ele or 0) >= 2500):
+                        add('place', 'peak', f'{label} ({ele:,.0f} m)' if ele is not None else label, S.peak_z(ele), [(o.lon, o.lat)])
+                        n['place'] += 1
+                    continue
                 if place is not None:
                     cls = S.PLACE_AS.get(place, place)
-                    label = label_of(tags)
+                    label = S.place_name(tags)
                     if label and cls in S.PLACE_Z and (detail or cls in S.OVERVIEW_PLACES):
                         z = S.PLACE_Z[cls]
                         if cls in ('city', 'town'):
@@ -214,6 +223,16 @@ def build(pbf, out, level='detail', buildings=True, node_index=None, progress=No
                     z = S.WATERWAY_Z.get(ww)
                     if z is not None and (detail or ww != 'stream'):
                         add('waterway', ww, tags.get('name') or None, z, line(o, tol['waterway']))
+                    continue
+                if tags.get('route') == 'ferry':
+                    add('waterway', 'ferry', tags.get('name') or None, S.FERRY_Z, line(o, tol['waterway']))
+                    continue
+                if tags.get('boundary') == 'administrative':
+                    # A border, where the way itself says whose (most of Europe's do; where only the relation says, it is not drawn).
+                    # Not the lines out at sea that mark territorial waters.
+                    border = S.BORDER.get(tags.get('admin_level'))
+                    if border and tags.get('maritime') != 'yes' and (detail or border[0] == 'country'):
+                        add('border', border[0], None, border[1], line(o, tol['waterway']))
             elif o.is_area():
                 building = tags.get('building')
                 cls = S.poi_class(tags)

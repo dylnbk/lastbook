@@ -10,7 +10,8 @@ const MapView = (() => {
   const FULL = ['<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>', '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>'];   // full screen, and leave it
   const C = { land: '#f2efe6', ocean: '#aad3df', water: '#aad3df', wet: '#cfe3d4', beach: '#f4e7b6',
     park: '#cfe7c2', playa: '#ece4cf', green: '#d5e8c6', farm: '#eceac6', res: '#ebe7de', com: '#f1e2df', ind: '#e8e1ea', bldg: '#d9d0c3', bldgLine: '#c6bcae',
-    waterway: '#8cc0d6', rail: '#8f8f8f', label: '#2a2f2c', halo: 'rgba(255,255,255,.9)' };
+    waterway: '#8cc0d6', rail: '#8f8f8f', label: '#2a2f2c', halo: 'rgba(255,255,255,.9)',
+    ferry: '#5a8fb3', border: 'rgba(128,84,150,.8)', border2: 'rgba(128,84,150,.5)' };
   const ROAD = { motorway: ['#e9a03b', 5, 5], trunk: ['#efb556', 4.5, 6], primary: ['#f6d57c', 4, 8], secondary: ['#fdf3c4', 3.5, 10],
     tertiary: ['#ffffff', 3, 11], residential: ['#ffffff', 2.2, 13], unclassified: ['#ffffff', 2.2, 13], living_street: ['#ffffff', 2, 14],
     service: ['#ffffff', 1.4, 15], pedestrian: ['#efeae4', 2, 14], track: ['#c8a777', 1.2, 13], footway: ['#d08f7a', 1, 15], path: ['#d08f7a', 1, 14],
@@ -423,8 +424,24 @@ const MapView = (() => {
     if (!photo) {
       poly(L.ocean, C.ocean); poly(L.island, C.land);
       poly(L.land, cls => C[cls] || C.res); poly(L.beach, C.beach); poly(L.wet, C.wet); poly(L.water, C.water);
-      if (L.waterway) for (const [cls, , parts] of L.waterway) { g.strokeStyle = C.waterway; g.lineWidth = (cls === 'river' ? (z < 9 ? 1.6 : 3) : z < 12 ? 0.7 : 1.2) * R; for (const p of parts) { line(p); g.stroke() } }
+      if (L.waterway) {
+        for (const [cls, , parts] of L.waterway) {
+          const ferry = cls === 'ferry';   // a ferry's route is not water: a dashed line across it, darker than the sea
+          g.setLineDash(ferry ? [5 * R, 4 * R] : []); g.strokeStyle = ferry ? C.ferry : C.waterway;
+          g.lineWidth = (ferry ? 1 : cls === 'river' ? (z < 9 ? 1.6 : 3) : z < 12 ? 0.7 : 1.2) * R; for (const p of parts) { line(p); g.stroke() }
+        }
+        g.setLineDash([]);
+      }
       if (z >= 15) poly(L.bldg, C.bldg, C.bldgLine);
+    }
+    // Borders (regions built from OpenStreetMap carry them): a country's, and inside a detailed region a state's or nation's
+    if (L.border) {
+      for (const [cls, , parts] of L.border) {
+        const country = cls === 'country';
+        g.strokeStyle = country ? C.border : C.border2; g.lineWidth = (country ? 1.8 : 1.1) * R; g.setLineDash(country ? [9 * R, 3 * R, 2 * R, 3 * R] : [4 * R, 3 * R]);
+        for (const p of parts) { line(p); g.stroke() }
+      }
+      g.setLineDash([]);
     }
     g.globalAlpha = photo ? 0.55 : 1;
     const scale = Math.max(0.5, Math.min(2.4, 1 + (z - 14) * 0.35));
@@ -442,7 +459,7 @@ const MapView = (() => {
     if (L.rail) { g.strokeStyle = C.rail; g.lineWidth = 1.4 * R; g.setLineDash([5 * R, 3 * R]); for (const [, , parts] of L.rail) for (const p of parts) { line(p); g.stroke() } g.setLineDash([]) }
     g.globalAlpha = 1;
     const labels = [];
-    if (L.place) for (const [cls, name, parts] of L.place) labels.push({ x: parts[0][0] / EXT, y: parts[0][1] / EXT, name, cls, pri: { city: 1, town: 2, suburb: 3, village: 3, county: 0, region: 0 }[cls] ?? 4 });
+    if (L.place) for (const [cls, name, parts] of L.place) labels.push({ x: parts[0][0] / EXT, y: parts[0][1] / EXT, name: cls === 'peak' ? '▲ ' + name : name, cls, pri: { city: 1, town: 2, suburb: 3, village: 3, county: 0, region: 0, peak: 5 }[cls] ?? 4 });
     if (z >= 15 && L.road) for (const [cls, name, parts] of L.road) { if (!name || roadStyle(cls)[1] < 2) continue; const p = parts[0]; if (p.length < 4) continue; const i = (p.length / 4 | 0) * 2; labels.push({ x: p[i] / EXT, y: p[i + 1] / EXT, name, cls: 'road', pri: 6, ang: Math.atan2(p[i + 3] - p[i + 1], p[i + 2] - p[i]) }) }
     return { canvas: c, labels };
   }
@@ -504,15 +521,15 @@ const MapView = (() => {
     g.textAlign = 'center'; g.textBaseline = 'middle';
     for (const l of labels) {
       if (!l.name || l.sx < -50 || l.sx > w + 50 || l.sy < -20 || l.sy > h + 20) continue;
-      const size = l.cls === 'road' ? 11 : l.pri <= 1 ? 16 : l.pri <= 2 ? 14 : 13;
-      g.font = `${l.cls === 'road' ? 500 : 700} ${size}px -apple-system,Segoe UI,Roboto,sans-serif`;
+      const size = l.cls === 'road' ? 11 : l.cls === 'peak' ? 12 : l.pri <= 1 ? 16 : l.pri <= 2 ? 14 : 13;
+      g.font = `${l.cls === 'road' ? 500 : l.cls === 'peak' ? 600 : 700} ${size}px -apple-system,Segoe UI,Roboto,sans-serif`;
       const tw = g.measureText(l.name).width + 6, bx = { x: l.sx - tw / 2, y: l.sy - size / 2 - 2, w: tw, h: size + 4 };
       if (l.cls !== 'road' && boxes.some(b => bx.x < b.x + b.w && bx.x + bx.w > b.x && bx.y < b.y + b.h && bx.y + bx.h > b.y)) continue;
       if (l.cls === 'road' && boxes.slice(st.pins.length).some(b => bx.x < b.x + b.w && bx.x + bx.w > b.x && bx.y < b.y + b.h && bx.y + bx.h > b.y)) continue;
       boxes.push(bx);
       g.save(); g.translate(l.sx, l.sy);
       if (l.ang != null) { let a = l.ang; if (a > Math.PI / 2) a -= Math.PI; if (a < -Math.PI / 2) a += Math.PI; g.rotate(a) }
-      g.lineWidth = 3.5; g.strokeStyle = C.halo; g.strokeText(l.name, 0, 0); g.fillStyle = l.cls === 'road' ? '#4a4a4a' : C.label; g.fillText(l.name, 0, 0); g.restore();
+      g.lineWidth = 3.5; g.strokeStyle = C.halo; g.strokeText(l.name, 0, 0); g.fillStyle = l.cls === 'road' ? '#4a4a4a' : l.cls === 'peak' ? '#6b4a2a' : C.label; g.fillText(l.name, 0, 0); g.restore();
     }
     // pins: clusters underneath, single places on top; hit-testing walks the same list backwards
     st.hits = [];
