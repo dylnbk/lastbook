@@ -225,7 +225,7 @@ struct Cue: Identifiable { let id: Int; let t: Double?; let text: String }
         leave(); id = vid
         doc = nil; player = nil; error = nil; cues = []; txLoaded = false; related = []; resumeAt = nil; started = false
         let (j, status) = await LocalAPI.get("/api/doc/\(vid)")
-        guard let d = j as? Rec, status == 200 else { error = "This video is not in the library on this iPad."; return }
+        guard let d = j as? Rec, status == 200 else { error = "This video is not in the library on this \(Device.name)."; return }
         doc = d
         let path = d.s("path")
         let url = await Task.detached { LocalAPI.fileURL(path) }.value
@@ -235,7 +235,7 @@ struct Cue: Identifiable { let id: Int; let t: Double?; let text: String }
             let p = AVPlayer(playerItem: item)
             p.actionAtItemEnd = .pause
             statusObs = item.observe(\.status) { [weak self] it, _ in
-                if it.status == .failed { Task { @MainActor in self?.error = "This video file can’t be played on this iPad. The transcript still works."; self?.player = nil } }
+                if it.status == .failed { Task { @MainActor in self?.error = "This video file can’t be played on this \(Device.name). The transcript still works."; self?.player = nil } }
             }
             rateObs = p.observe(\.rate) { [weak self] pl, _ in if pl.rate > 0 { Task { @MainActor in self?.started = true; self?.resumeAt = nil } } }
             observer = p.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] t in
@@ -245,8 +245,13 @@ struct Cue: Identifiable { let id: Int; let t: Double?; let text: String }
             if let s = startAt, s > 0 { await p.seek(to: CMTime(seconds: s, preferredTimescale: 600)) }
             else if let e = saved, e.t > 15, d.d("duration") <= 0 || e.t < d.d("duration") - 20 { resumeAt = e.t }
             player = p
+        } else if d.truthy("wordsOnly") {
+            // Not a fault: the library was made to hold this video's words only (or its picture is still being made smaller).
+            error = d.truthy("pending")
+                ? "This video’s picture is not in the library yet: it is still being made smaller on the computer that is building this library. What is said in it is below."
+                : "This library holds this video’s words, not its picture, which was left out to save room. What is said in it is below, with the time each thing was said."
         } else {
-            error = "This video’s file isn’t on this iPad. The transcript still works."
+            error = "This video’s file isn’t on this \(Device.name). The transcript still works."
         }
         let tx = await LocalAPI.rec("/api/transcript/\(vid)")
         let raw = (tx?["cues"] as? [Rec]) ?? []

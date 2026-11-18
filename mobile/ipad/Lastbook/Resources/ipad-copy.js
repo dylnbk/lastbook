@@ -4,24 +4,26 @@
    touched. The model card points to On My iPad › Lastbook instead of a desktop folder or Downloads. */
 (() => {
   if (window.top !== window || window.origin === 'null') return;
+  /* One app for iPhone and iPad: each sentence names the one it is on. (An iPad's web view says it is a Mac; only an iPhone says iPhone.) */
+  const DEV = /iPhone|iPod/.test(navigator.userAgent) ? 'iPhone' : 'iPad';
   const SWAP = new Map([
     ['Chats stay on this device. Nothing is sent anywhere except this computer’s own assistant.',
-     'Chats stay on this iPad. Nothing is sent anywhere.'],
+     'Chats stay on this ' + DEV + '. Nothing is sent anywhere.'],
     ['Answers come from the library on this computer and can be wrong. Check the linked pages; get trained help for anything serious.',
-     'Answers come from the library on this iPad and can be wrong. Check the linked pages; get trained help for anything serious.'],
-    ['Checking this computer’s memory…', 'Checking this iPad’s memory…'],
-    ['checking this computer’s memory…', 'checking this iPad’s memory…'],
+     'Answers come from the library on this ' + DEV + ' and can be wrong. Check the linked pages; get trained help for anything serious.'],
+    ['Checking this computer’s memory…', 'Checking this ' + DEV + '’s memory…'],
+    ['checking this computer’s memory…', 'checking this ' + DEV + '’s memory…'],
     ['Answers are built only from the manuals, guides and video transcripts on this computer — with the exact page or video moment for each point.',
-     'Answers are built only from the manuals, guides and video transcripts on this iPad — with the exact page or video moment for each point.'],
+     'Answers are built only from the manuals, guides and video transcripts on this ' + DEV + ' — with the exact page or video moment for each point.'],
     ['Public manuals, health guides, courses, videos and encyclopedias kept on this computer, so it works when the internet and phones don’t.',
-     'Public manuals, health guides, courses, videos and encyclopedias kept on this iPad, so it works when the internet and phones don’t.'],
-    ['No local AI added', 'No local AI on this iPad'],
+     'Public manuals, health guides, courses, videos and encyclopedias kept on this ' + DEV + ', so it works when the internet and phones don’t.'],
+    ['No local AI added', 'No local AI on this ' + DEV],
     ['not added. Add it in Library and local AI (about 17 GB).',
-     'not added. Put the local AI file (about 17 GB) in Files › On My iPad › Lastbook, then Look again.'],
+     'not added. Put the local AI file (about 17 GB) in Files › On My ' + DEV + ' › Lastbook, then Look again.'],
   ]);
   const MODEL = 'gemma-4-26B-A4B-it-UD-Q4_K_M.gguf';
-  const CARD = `<p><b>Add the local AI to get written answers.</b> It is one file of about 17 GB, and runs on this iPad only.</p>
-    <p class="small">Put <code>${MODEL}</code> in <b>Files › On My iPad › Lastbook</b> (copy it from a Mac with Finder, or from a drive), then tap Look again.</p>
+  const CARD = `<p><b>Add the local AI to get written answers.</b> It is one file of about 17 GB, and runs on this ${DEV} only.</p>
+    <p class="small">Put <code>${MODEL}</code> in <b>Files › On My ${DEV} › Lastbook</b> (copy it from a Mac with Finder, or from a drive), then tap Look again.</p>
     <div class="row"><button class="btn" data-ai="rescan">Look again</button></div>`;
 
   function fixText(root) {
@@ -69,10 +71,10 @@
       case 'loading': return ['spin', `Loading local AI…${pct}`];
       case 'ready': return ['ready', 'Local AI ready'];
       case 'stopped': return ['ready', 'Local AI ready · it loads when you ask'];
-      case 'absent': return ['none', 'No local AI on this iPad' + STILL];
+      case 'absent': return ['none', 'No local AI on this ' + DEV + STILL];
       case 'off': return ['none', 'Local AI is off' + STILL];
-      case 'wrong': return ['incompatible', (l.message || 'The local AI file on this iPad is not the right one.') + STILL];
-      case 'too_big': return ['incompatible', (l.message || 'The local AI does not fit this iPad’s memory.') + STILL];
+      case 'wrong': return ['incompatible', (l.message || 'The local AI file on this ' + DEV + ' is not the right one.') + STILL];
+      case 'too_big': return ['incompatible', (l.message || 'The local AI does not fit this ' + DEV + '’s memory.') + STILL];
       case 'error': return ['failed', (l.message || 'The local AI could not start.') + STILL];
       default: return null;
     }

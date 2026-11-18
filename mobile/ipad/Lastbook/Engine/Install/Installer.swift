@@ -97,7 +97,7 @@ enum Installer {
         case .videoCopies:
             guard let root = Library.shared.root else { throw InstallError.refused("Install a library first, then its video copies.") }
             let (n, bytes) = try VideoCopiesInstall.install(zip: file, root: root, needed: needsH264, progress: up, isCancelled: isCancelled)
-            return Report(kind: .videoCopies, title: "Video copies installed", detail: "\(n) videos (\(ByteCountFormatter().string(fromByteCount: bytes))) now play on this iPad.")
+            return Report(kind: .videoCopies, title: "Video copies installed", detail: "\(n) videos (\(ByteCountFormatter().string(fromByteCount: bytes))) now play on this \(Device.name).")
         }
     }
 

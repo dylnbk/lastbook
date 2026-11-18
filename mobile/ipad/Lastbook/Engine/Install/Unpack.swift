@@ -21,7 +21,7 @@ enum ZipInstall {
             try FileManager.default.removeItem(at: probe)
         } catch {
             throw InstallError.folder("Lastbook can’t save next to this library (in “\(root.deletingLastPathComponent().lastPathComponent)”). "
-                                      + "Put the library in On My iPad › Lastbook, or install the download there instead.")
+                                      + "Put the library in \(Device.files) › Lastbook, or install the download there instead.")
         }
         return work
     }

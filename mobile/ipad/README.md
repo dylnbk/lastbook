@@ -8,6 +8,40 @@ on the iPad. This is **source for contributors**, not a release.
 Licence: MIT, like the rest of this repository (see [`/LICENSE`](../../LICENSE)). Third-party parts are listed in
 [`/THIRD_PARTY_NOTICES.md`](../../THIRD_PARTY_NOTICES.md), in the section "iPad development preview".
 
+## In this fork: iPhone as well, and maps of anywhere
+
+What the fork changed here, and how far each change was tried. The rest of this page is upstream's and still says iPad.
+
+- **One app for iPhone and iPad.** The target is universal (`TARGETED_DEVICE_FAMILY = "1,2"`), and every sentence that
+  said "this iPad" names the device it is on (`Engine/Device.swift`).
+  - **Not run on an iPhone, nor in the simulator.** The Mac this was written on has Xcode 16.4 without its simulator
+    parts, and `xcodebuild` will not start there. What was done instead: the whole app type-checks against the iOS 18.5
+    SDK with that Xcode's compiler (`swiftc -typecheck`, no errors), and the engine runs on the Mac through the parity
+    tool below. How the screens sit on a phone is therefore **untested**. They were written to adapt to a narrow window
+    (`-LBNarrow`), which is the same size class.
+  - One upstream expression that Xcode 16.4's compiler gave up on (the zip CRC-32) is written a step at a time. Its
+    answers were checked against zlib for twelve lengths.
+- **Maps of regions built from open data** (`derived/geo/regions/`, [docs/WORLD-MAPS.md](../../docs/WORLD-MAPS.md)) are
+  drawn, searched and asked about: map tiles, help points, nearest, the place finder (postcodes and street addresses
+  outside the US included), which map a point is on, and what the map says of itself (`Engine/Regions.swift`,
+  `API/MapAPI.swift`).
+  - Compared with the desktop's answers by the parity tool, on a library with 4 regions in full detail and 41 in
+    outline: **100 of 101 answers the same** (tiles at six zooms in eight places, help points, nearest, elevation,
+    map info), and 13 of 16 place searches.
+  - The one that differs is known: a zoomed-out elevation tile where two regions meet. The desktop lays their tiles
+    together; this app uses the first region's.
+  - The three searches that differ do so after the first few results: the desktop's newer ordering of equal names is
+    not ported.
+  - Not ported: leaving an outline region's help points out where a detailed region covers the same ground. Regions of
+    different countries do not overlap, so this shows only where someone builds both for one country.
+- **A library on a drive** opens in place, with nothing copied: Library, then "Choose a LastbookData folder in
+  Files…". That was upstream's already. It has not been tried here with a drive plugged into an iPhone or iPad.
+- **A video kept by its words alone** (a library made of chosen parts, [docs/WIZARD.md](../../docs/WIZARD.md)) says
+  so on its page instead of reporting a missing file.
+- **Not done:** a reader for encyclopedias (ZIM), which the plan for this fork named; choosing another AI model
+  ([docs/AI-MODELS.md](../../docs/AI-MODELS.md)), which is the desktop's only. On a phone the stock 17 GB model does
+  not fit, so Chat there shows the matching pages and writes nothing.
+
 ## What works
 
 - **Videos:** a native home feed, categories, search and a watch page. The watch page has the system player (Picture in Picture), a searchable transcript and Up next.

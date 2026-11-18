@@ -46,7 +46,7 @@ enum InstallError: Error, CustomStringConvertible {
         case .wrongState(let f, let e): return "The map file says it is \(f), not \(e)."
         case .noSpace(let n, let a):
             let f = ByteCountFormatter()
-            return "There is not enough room: this needs \(f.string(fromByteCount: n)) free and the iPad has \(f.string(fromByteCount: a)). Free some space, then try again."
+            return "There is not enough room: this needs \(f.string(fromByteCount: n)) free and the \(Device.name) has \(f.string(fromByteCount: a)). Free some space, then try again."
         case .cancelled: return "Cancelled."
         }
     }

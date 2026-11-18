@@ -364,7 +364,7 @@ final class LlamaLocal: LocalModel, @unchecked Sendable {
                         "n_gpu_layers": fit["n_gpu_layers"] ?? NSNull(), "app_available": fit["app_available"] ?? NSNull()]
         if fit.s("status") != "fits" {
             out["fits"] = false
-            out["why"] = "The local AI does not fit this iPad’s memory."
+            out["why"] = "The local AI does not fit this \(Device.name)’s memory."
         } else { out["fits"] = true }
         return out
     }
@@ -415,10 +415,10 @@ final class LlamaLocal: LocalModel, @unchecked Sendable {
     }
 
     static func unavailable(_ s: String) -> String {
-        ["absent": "The local AI file is not on this iPad. Search and reading still work.",
+        ["absent": "The local AI file is not on this \(Device.name). Search and reading still work.",
          "off": "The local AI is turned off. Search and reading still work.",
-         "too_big": "The local AI does not fit this iPad’s memory.",
-         "wrong": "The local AI file on this iPad is not the right one."][s] ?? "The local AI is not set up on this iPad."
+         "too_big": "The local AI does not fit this \(Device.name)’s memory.",
+         "wrong": "The local AI file on this \(Device.name) is not the right one."][s] ?? "The local AI is not set up on this \(Device.name)."
     }
 
     /// Starts a load on its own background thread (lock held). Utility priority, so Videos, Map and WebKit stay ahead of it.
@@ -513,7 +513,7 @@ final class LlamaLocal: LocalModel, @unchecked Sendable {
         if wasLoading { loadToken += 1 }  // the load gives up at its next progress step, then frees what it made
         if generating || wasLoading {
             interrupted = ["background": "The local AI was stopped because Lastbook went to the background. Ask again to continue.",
-                           "memory": "iPadOS asked for memory back, so the local AI was stopped. Ask again, or close other apps first.",
+                           "memory": "\(Device.system) asked for memory back, so the local AI was stopped. Ask again, or close other apps first.",
                            "quit": "Lastbook is closing."][why]
         }
         if ["ready", "loading", "error"].contains(state), path != nil, (fit?["fits"] as? Bool) == true {
@@ -654,7 +654,7 @@ final class LlamaLocal: LocalModel, @unchecked Sendable {
         let folder = p.pathExtension == "gguf" ? p.deletingLastPathComponent() : p
         if let d = documents?.standardizedFileURL.path, folder.standardizedFileURL.path.hasPrefix(d) {
             let rel = String(folder.standardizedFileURL.path.dropFirst(d.count)).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            return rel.isEmpty ? "On My iPad › Lastbook" : "On My iPad › Lastbook › " + rel.replacingOccurrences(of: "/", with: " › ")
+            return rel.isEmpty ? "\(Device.files) › Lastbook" : "\(Device.files) › Lastbook › " + rel.replacingOccurrences(of: "/", with: " › ")
         }
         return folder.lastPathComponent
     }

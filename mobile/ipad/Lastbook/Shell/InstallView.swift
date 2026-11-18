@@ -86,25 +86,25 @@ struct InstallView: View {
         VStack(alignment: .leading, spacing: 14) {
             Text("What will be installed").font(.title2.bold())
             if run.planning && run.plan == nil {
-                HStack { ProgressView(); Text("Checking this iPad’s videos…") }
+                HStack { ProgressView(); Text("Checking this \(Device.name)’s videos…") }
             }
             if let p = run.plan {
-                if run.planning { HStack { ProgressView(); Text("Checking this iPad’s videos…") } }
+                if run.planning { HStack { ProgressView(); Text("Checking this \(Device.name)’s videos…") } }
                 ForEach(p.items) { i in planRow(i) }
                 if InstallCatalog.model != nil, p.items.contains(where: { $0.kind == .model && $0.status != .installed }),
                    !p.items.contains(where: { if case .unsupported = $0.status { return $0.kind == .model }; return false }) {
                     Toggle("Include the local AI", isOn: $run.wantAI).font(.title3).disabled(run.running)
                 }
                 Text("To download: \(bytes(p.downloadBytes)). Room needed: \(bytes(p.spaceNeeded))"
-                     + (p.free.map { ". Free on this iPad: \(bytes($0))." } ?? ".")).font(.body)
+                     + (p.free.map { ". Free on this \(Device.name): \(bytes($0))." } ?? ".")).font(.body)
                 if p.tooBigForDevice, let c = p.capacity {
-                    Text("This iPad holds \(bytes(c)) in all. This install needs \(bytes(p.spaceNeeded)) free at its fullest, so it can’t fit here even on an empty iPad. Choose a smaller library.")
+                    Text("This \(Device.name) holds \(bytes(c)) in all. This install needs \(bytes(p.spaceNeeded)) free at its fullest, so it can’t fit here even on an empty \(Device.name). Choose a smaller library.")
                         .foregroundStyle(.red)
                 } else if !p.fits, let free = p.free {
-                    Text("Not enough room: this needs \(bytes(p.spaceNeeded)) free and the iPad has \(bytes(free)). Free some space, then try again.")
+                    Text("Not enough room: this needs \(bytes(p.spaceNeeded)) free and the \(Device.name) has \(bytes(free)). Free some space, then try again.")
                         .foregroundStyle(.red)
                 }
-                ForEach(p.blockers.filter { !p.tooBigForDevice || !$0.hasPrefix("This iPad holds") }, id: \.self) { Text($0).foregroundStyle(.orange) }
+                ForEach(p.blockers.filter { !p.tooBigForDevice || !$0.hasPrefix("This \(Device.name) holds") }, id: \.self) { Text($0).foregroundStyle(.orange) }
                 if p.complete && p.toDo.isEmpty {
                     Label("Everything required is installed.", systemImage: "checkmark.circle.fill").foregroundStyle(.green).font(.title3)
                 } else {

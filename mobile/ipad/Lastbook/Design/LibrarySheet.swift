@@ -19,7 +19,7 @@ struct LibrarySheet: View {
                         Image("Book").resizable().scaledToFit().frame(width: 52, height: 52).clipShape(RoundedRectangle(cornerRadius: 12))
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Lastbook").font(.title3.bold())
-                            Text("Works offline. Nothing on this iPad is sent anywhere.").font(.subheadline).foregroundStyle(.secondary)
+                            Text("Works offline. Nothing on this \(Device.name) is sent anywhere.").font(.subheadline).foregroundStyle(.secondary)
                         }
                     }.padding(.vertical, 4)
                 }
@@ -43,9 +43,9 @@ struct LibrarySheet: View {
                             .accessibilityLabel("\(i.ok ? "Ready" : "Not ready"): \(i.title). \(i.detail)")
                         }
                     } else {
-                        HStack { ProgressView(); Text("Checking this iPad…") }
+                        HStack { ProgressView(); Text("Checking this \(Device.name)…") }
                     }
-                } header: { Text("On this iPad") } footer: {
+                } header: { Text("On this \(Device.name)") } footer: {
                     if let r = nav.readiness { Text(r.missing.isEmpty ? "Everything in this library is ready." : "\(r.missing.count) not ready yet. The rest works now.") }
                 }
                 Section("Downloads") {
@@ -53,14 +53,14 @@ struct LibrarySheet: View {
                     Button { chooseFolder() } label: { Label("Choose a LastbookData folder in Files…", systemImage: "folder") }
                 }
                 Section {
-                    Toggle("Keep chat history on this iPad", isOn: $chats.keep)
+                    Toggle("Keep chat history on this \(Device.name)", isOn: $chats.keep)
                     Button("Delete all chats", role: .destructive) { confirmDelete = true }.disabled(chats.chats.isEmpty)
                 } header: { Text("Chat") } footer: { Text("Chats are stored in this app only and are never sent anywhere.") }
             }
             .navigationTitle("Library")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .confirmationDialog("Delete all chats on this iPad?", isPresented: $confirmDelete, titleVisibility: .visible) {
+            .confirmationDialog("Delete all chats on this \(Device.name)?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Delete all chats", role: .destructive) { chats.deleteAll() }
             }
             .refreshable { nav.refreshReadiness() }

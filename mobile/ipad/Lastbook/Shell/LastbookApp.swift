@@ -83,7 +83,7 @@ struct Welcome: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Add your library").font(.headline)
                 Text("Install the Lastbook download (the library zip, then your state's map and addresses) from Files.")
-                Text("Or copy a LastbookData folder to this iPad and tap Choose library, or put it in Files › On My iPad › Lastbook and tap Look again.")
+                Text("Or copy a LastbookData folder to this \(Device.name) and tap Choose library, or put it in Files › \(Device.files) › Lastbook and tap Look again.")
             }.font(.body).frame(maxWidth: 560, alignment: .leading)
             if let message { Text(message).foregroundStyle(.red).frame(maxWidth: 560) }
             HStack(spacing: 16) {
@@ -193,7 +193,7 @@ struct WebHost: UIViewRepresentable {
         /// The only way out to the internet: a web link the person tapped, and only after they agree.
         @MainActor func offerToLeave(_ u: URL) {
             guard let top = view?.window?.rootViewController else { return }
-            let a = UIAlertController(title: "Open on the internet?", message: "\(u.host ?? u.absoluteString) is a web page, not part of your offline library. Safari will open it if this iPad is online.", preferredStyle: .alert)
+            let a = UIAlertController(title: "Open on the internet?", message: "\(u.host ?? u.absoluteString) is a web page, not part of your offline library. Safari will open it if this \(Device.name) is online.", preferredStyle: .alert)
             a.addAction(UIAlertAction(title: "Stay here", style: .cancel))
             a.addAction(UIAlertAction(title: "Open in Safari", style: .default) { _ in UIApplication.shared.open(u) })
             (top.presentedViewController ?? top).present(a, animated: true)

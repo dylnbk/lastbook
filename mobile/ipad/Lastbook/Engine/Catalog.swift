@@ -107,6 +107,12 @@ final class Catalog: @unchecked Sendable {
             if let th = thumbs[r.s("path")], let lib = Library.shared.lib, FileManager.default.fileExists(atPath: lib.appendingPathComponent(th).path) {
                 out["thumb"] = th
             } else { out["thumb"] = NSNull() }
+            // A library made of chosen parts (engine/wizard on the desktop) may hold a video's words without its picture:
+            // left out to save room, or (pending) not yet made smaller by a build that is still running. As server.py's public().
+            if r.truthy("words_only") {
+                out["wordsOnly"] = true
+                out["pending"] = r.truthy("pending")
+            }
         }
         if r.s("searchability").hasPrefix("image-only") { out["imageOnly"] = true }
         if full {

@@ -25,7 +25,7 @@ struct ChatScreen: View {
                 }
             }
             .overlay {
-                if store.chats.isEmpty { ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.text.bubble.right", description: Text("Chats stay on this iPad.")) }
+                if store.chats.isEmpty { ContentUnavailableView("No chats yet", systemImage: "bubble.left.and.text.bubble.right", description: Text("Chats stay on this \(Device.name).")) }
                 else if filtered.isEmpty { ContentUnavailableView.search(text: find) }
             }
             .searchable(text: $find, placement: .sidebar, prompt: "Search chats")
@@ -82,9 +82,9 @@ struct AIStatusLine: View {
         .popover(isPresented: $open) {
             VStack(alignment: .leading, spacing: 12) {
                 Text(store.status.line).font(.headline)
-                Text(store.status.tone == .ready ? "Questions are answered by the local AI on this iPad, from the library only. Nothing is sent anywhere."
+                Text(store.status.tone == .ready ? "Questions are answered by the local AI on this \(Device.name), from the library only. Nothing is sent anywhere."
                      : store.status.tone == .starting ? "The local AI is starting, as it does each time Lastbook opens. You can keep using Videos and Map, and type your question meanwhile."
-                     : "Without the local AI, a question shows the library pages that match it. Written answers need the local AI file on this iPad.")
+                     : "Without the local AI, a question shows the library pages that match it. Written answers need the local AI file on this \(Device.name).")
                     .font(.body).fixedSize(horizontal: false, vertical: true)
                 HStack {
                     Button("Library and downloads") { open = false; nav.showLibrary = true }.buttonStyle(.bordered)
@@ -179,7 +179,7 @@ struct EmptyChat: View {
             Spacer(minLength: 40)
             Image("Book").resizable().scaledToFit().frame(width: 64, height: 64).clipShape(RoundedRectangle(cornerRadius: 14)).accessibilityHidden(true)
             Text("Ask the library").font(.largeTitle.bold())
-            Text("Answers from the manuals and videos on this iPad, with the exact page or moment for each point.")
+            Text("Answers from the manuals and videos on this \(Device.name), with the exact page or moment for each point.")
                 .font(.title3).foregroundStyle(.secondary).multilineTextAlignment(.center)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)], spacing: 12) {
                 ForEach(Self.starters, id: \.1) { icon, q in
@@ -248,7 +248,7 @@ struct Composer: View {
             }
             .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).strokeBorder(Color(.separator), lineWidth: 0.5))
-            Text("Answers come from the library on this iPad and can be wrong. Check the linked pages.")
+            Text("Answers come from the library on this \(Device.name) and can be wrong. Check the linked pages.")
                 .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 24).padding(.top, 8).padding(.bottom, 10)

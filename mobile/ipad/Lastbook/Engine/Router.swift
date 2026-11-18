@@ -107,7 +107,7 @@ final class Router: @unchecked Sendable {
         if p == "/sw.js" { return .notFound() }   // no service worker inside the app
         if p.hasPrefix("/ui/") { return staticFile(web, String(p.dropFirst(4))) }
         for g in groups { if let a = g.handle(r) { return a } }
-        if p.hasPrefix("/api/") { return .error("Not available in the iPad app yet.", status: 404) }
+        if p.hasPrefix("/api/") { return .error("Not available in the \(Device.name) app yet.", status: 404) }
         // Library files (videos, thumbnails, transcripts, saved pages), only below library-data and only allowed prefixes.
         if let lib = Library.shared.lib, LibraryFiles.allowed(p) {
             let rel = String(p.dropFirst())

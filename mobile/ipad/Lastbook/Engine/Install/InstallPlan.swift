@@ -57,8 +57,8 @@ struct Plan: Equatable {
         var out: [String] = []
         if state == nil { out.append("Choose your state first.") }
         if tooBigForDevice, let c = capacity {
-            out.append("This iPad holds \(ByteCountFormatter.string(fromByteCount: c, countStyle: .file)) in all, and this install needs "
-                       + "\(ByteCountFormatter.string(fromByteCount: spaceNeeded, countStyle: .file)) free at its fullest, so it can’t fit on this iPad even if it were empty. Choose a smaller pack.")
+            out.append("This \(Device.name) holds \(ByteCountFormatter.string(fromByteCount: c, countStyle: .file)) in all, and this install needs "
+                       + "\(ByteCountFormatter.string(fromByteCount: spaceNeeded, countStyle: .file)) free at its fullest, so it can’t fit on this \(Device.name) even if it were empty. Choose a smaller pack.")
         }
         for i in items where i.required {
             if case .unavailable(let why) = i.status { out.append(why) }
@@ -101,7 +101,7 @@ enum InstallPlan {
         guard env.aiRuntime else { return (false, false, "This copy of Lastbook has no local AI runtime.") }
         if env.ram >= testedRAM { return (true, true, nil) }
         let gb = String(format: "%.0f GB", (Double(env.ram) / 1073741824).rounded())
-        return (true, false, "Not tested on an iPad with \(gb) of memory; the local AI may not fit. Lastbook checks the fit after the download and says so.")
+        return (true, false, "Not tested on an \(Device.name) with \(gb) of memory; the local AI may not fit. Lastbook checks the fit after the download and says so.")
     }
 
     static func defaultWantAI(_ env: Env = .current()) -> Bool { aiSupport(env).tested }
@@ -193,11 +193,11 @@ enum InstallPlan {
         if env.needsH264 {
             let ve = InstallCatalog.entry(.videoCopies, finalPack)
             let known = packStatus == .installed && env.root != nil
-            let need = known ? "this iPad needs them for \(env.av1Missing) video\(env.av1Missing == 1 ? "" : "s")"
-                             : "this iPad needs them for \(packTitle(finalPack))’s AV1 and VP9 videos"
+            let need = known ? "this \(Device.name) needs them for \(env.av1Missing) video\(env.av1Missing == 1 ? "" : "s")"
+                             : "this \(Device.name) needs them for \(packTitle(finalPack))’s AV1 and VP9 videos"
             let vs: PlanItem.Status = known && env.av1Missing == 0 ? .installed
                 : ve?.available == true ? .toDownload : .unavailable("Not available to download yet — \(need); import the zip from Files.")
-            items.append(PlanItem(id: "videoCopies:\(finalPack)", kind: .videoCopies, title: "Video copies for this iPad (H.264)",
+            items.append(PlanItem(id: "videoCopies:\(finalPack)", kind: .videoCopies, title: "Video copies for this \(Device.name) (H.264)",
                                   downloadBytes: ve?.downloadBytes ?? 0, installedBytes: ve?.installedBytes ?? 0,
                                   partialBytes: vs == .toDownload ? partial(ve, libTarget) : 0, status: vs, required: false, note: nil, entry: ve))
         }
@@ -207,7 +207,7 @@ enum InstallPlan {
             let sup = aiSupport(env)
             let placed = modelPlaced(root: env.root)
             let st: PlanItem.Status = placed ? .installed
-                : !sup.supported ? .unsupported(sup.note ?? "This iPad can’t run the local AI.")
+                : !sup.supported ? .unsupported(sup.note ?? "This \(Device.name) can’t run the local AI.")
                 : !wantAI ? .optedOut : mo.available ? .toDownload : .unavailable("The local AI isn’t on the download site right now.")
             items.append(PlanItem(id: "model:\(mo.id)", kind: .model, title: "Local AI (\(mo.title))", downloadBytes: mo.downloadBytes,
                                   installedBytes: mo.installedBytes ?? 0, partialBytes: st == .toDownload ? partial(mo, libTarget) : 0,

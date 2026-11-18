@@ -41,7 +41,7 @@ struct ChatAPI: RouteGroup {
                 // Desktop checks the website only when asked. The iPad app has no such check: a new build replaces it.
                 let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
                 return .json(["state": "error", "current": (v as Any?) ?? NSNull(),
-                              "message": "On iPad, a newer Lastbook comes as a new app build. Your library stays where it is."])
+                              "message": "On \(Device.name), a newer Lastbook comes as a new app build. Your library stays where it is."])
             }
             return nil
         }

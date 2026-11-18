@@ -191,7 +191,9 @@ fileprivate final class MapEngine: @unchecked Sendable {
         "embassy": "Embassy", "mineral": "Recorded mineral / mine", "oil_gas_well": "Recorded oil / gas well",
         "boat_launch": "Boating facility", "fish_stocking": "Fish-stocking record",
         "dam": "Dam (National Inventory of Dams)", "reservoir": "Reservoir", "lake": "Lake or pond", "pond": "Pond",
-        "orchard": "Orchard", "vineyard": "Vineyard", "berries": "Berry field", "perennial_veg": "Asparagus field"]
+        "orchard": "Orchard", "vineyard": "Vineyard", "berries": "Berry field", "perennial_veg": "Asparagus field",
+        // in regions built from OpenStreetMap for anywhere in the world (server.py HELP)
+        "water_well": "Well or water pump (untested)", "defibrillator": "Defibrillator (AED)", "ambulance_station": "Ambulance station", "assembly_point": "Emergency assembly point"]
     static let CROP_KINDS: Set<String> = ["orchard", "vineyard", "berries", "perennial_veg"]
     static let WATER_KINDS: Set<String> = ["dam", "reservoir", "lake", "pond"]
     static let RESOURCE_KINDS: Set<String> = Set(["mineral", "oil_gas_well", "boat_launch", "fish_stocking", "dam", "reservoir", "lake", "pond"]).union(CROP_KINDS)
@@ -204,6 +206,7 @@ fileprivate final class MapEngine: @unchecked Sendable {
     private var _socalCells: Set<Int>?
     private var _socalClasses: Set<String>?
     private var _contents: [String: Any]?
+    private var _contentsFor: String?
     private var _pack: Any??
     private var _national: [String: Any]?
     private var tileCache: [String: Data] = [:]
@@ -274,7 +277,8 @@ fileprivate final class MapEngine: @unchecked Sendable {
         for f in ["water.sqlite", "water.sqlite-wal", "crops.sqlite", "terrain.sqlite", "buildings.sqlite", "buildings.sqlite-wal"] {
             if let m = mtimeMinutes(f) { v += ".\(m)" }
         }
-        return v
+        let atlas = RegionAtlas.shared
+        return atlas.isEmpty ? v : v + "." + atlas.version()     // as server.py: a region added or replaced gives every tile a new address
     }
 
     func socalCells() -> Set<Int> {
@@ -366,6 +370,11 @@ fileprivate final class MapEngine: @unchecked Sendable {
             return .json(try near(try pyFloat(try need("lat")), try pyFloat(try need("lon")), cls, try pyIntStr(qs("limit") ?? "5")))
         }
         if p == "/api/map/info" { return .json(mapInfo()) }
+        if p == "/api/map/where" {      // which map a point is on: a region in full detail, one in outline, a pack's map, or none
+            let lat = try pyFloat(try need("lat")), lon = try pyFloat(try need("lon"))
+            if let r = RegionAtlas.shared.at(lon, lat) { return .json(["level": r.level, "name": r.name, "id": r.id]) }
+            return .json(["level": mapdb != nil || nationalDB != nil ? "other" as Any : NSNull()])
+        }
         if p == "/api/places" {
             var nearPt: (Double, Double)? = nil
             if let s = qs("near") {
@@ -386,7 +395,9 @@ fileprivate final class MapEngine: @unchecked Sendable {
     }
 
     func terrainTile(_ z: Int, _ x: Int, _ y: Int) -> Data? {
-        tileBlob(geoDB(z >= 13 ? "terrain-detail.sqlite" : "terrain.sqlite"), "png", z, x, y)
+        if let png = tileBlob(geoDB(z >= 13 ? "terrain-detail.sqlite" : "terrain.sqlite"), "png", z, x, y) { return png }
+        guard z != Int.max, x != Int.max, y != Int.max, z <= 12 else { return nil }
+        return RegionAtlas.shared.terrain(z, x, y)      // outside the US elevation: a region built for somewhere else may have it
     }
 
     func cropTile(_ z: Int, _ x: Int, _ y: Int) -> Data? { tileBlob(cropDB, "png", z, x, y) }
@@ -480,7 +491,9 @@ fileprivate final class MapEngine: @unchecked Sendable {
     }
 
     func buildTile(_ z: Int, _ x: Int, _ y: Int, _ version: String) -> Data {
-        guard let db = mapdb else { return Data(#"{"error":"map not built"}"#.utf8) }
+        let atlas = RegionAtlas.shared
+        let db = mapdb
+        if db == nil && atlas.isEmpty { return Data(#"{"error":"map not built"}"#.utf8) }
         guard z <= 30, x >= 0, y >= 0, x < Int(Int32.max), y < Int(Int32.max) else { return Data(#"{"z":\#(z),"layers":{}}"#.utf8) }
         let (lon0, lat0, lon1, lat1) = Self.tileBounds(z, x, y)
         let pad = (lon1 - lon0) * 0.04
@@ -496,7 +509,12 @@ fileprivate final class MapEngine: @unchecked Sendable {
         }
         let box: [Any?] = [lon0 - pad, lon1 + pad, lat0 - pad, lat1 + pad, z]
         let sqlOrdered = "SELECT f.layer AS layer,f.cls AS cls,f.name AS name,f.geom AS geom FROM feat_idx i JOIN feat f ON f.id=i.id WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? AND i.minz<=? ORDER BY f.id"
-        var sources: [(SQLiteDB, String)] = [(db, sqlOrdered)]
+        var sources: [(SQLiteDB, String, [Any?])] = []
+        if let db { sources.append((db, sqlOrdered, box)) }
+        // The regions built for anywhere in the world, drawn with the same code as the map that came with a pack
+        for region in atlas.tileSources(z, lon0 - pad, lat0 - pad, lon1 + pad, lat1 + pad) {
+            sources.append((region, RegionAtlas.tileSQL, [lon0 - pad, lon1 + pad, lat0 - pad, lat1 + pad, z, z]))
+        }
         if let national = nationalDB {
             var covered = false   // fully covered by the detailed SoCal map
             if z >= 11 {
@@ -506,17 +524,17 @@ fileprivate final class MapEngine: @unchecked Sendable {
                     for j in pyInt((lat0 + 90) / c)...pyInt((lat1 + 90) / c) where !cells.contains(i * 100000 + j) { covered = false; break outer }
                 }
             }
-            if !covered { sources.append((national, sqlOrdered)) }
+            if !covered { sources.append((national, sqlOrdered, box)) }
         }
         if let w = waterDB {
-            sources.append((w, "SELECT f.layer AS layer,f.cls AS cls,f.name AS name,f.geom AS geom FROM feat_idx i JOIN feat f ON f.id=i.id WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? AND i.minz<=?"))
+            sources.append((w, "SELECT f.layer AS layer,f.cls AS cls,f.name AS name,f.geom AS geom FROM feat_idx i JOIN feat f ON f.id=i.id WHERE i.maxx>=? AND i.minx<=? AND i.maxy>=? AND i.miny<=? AND i.minz<=?", box))
         }
         let tol = z <= 6 ? 2.0 : z <= 9 ? 1.2 : z < 15 ? 0.7 : 0.4
         var layerOrder: [String] = []
         var layers: [String: [Feature]] = [:]
         let polyLayers: Set<String> = ["water", "wet", "land", "beach", "bldg", "ocean", "island"]
-        for (src, sql) in sources {
-            src.each(sql, box) { row in
+        for (src, sql, args) in sources {
+            src.each(sql, args) { row in
                 let layer = row["layer"]?.text
                 if layer == "bldg" && z < 15 { return }
                 guard let geom = row["geom"]?.blob else { return }
@@ -808,6 +826,7 @@ fileprivate final class MapEngine: @unchecked Sendable {
         let m = mapdb
         if let m, socalBox { out.append((m, false)) }
         if let nat = nationalDB { out.append((nat, socalBox && m != nil)) }
+        for region in RegionAtlas.shared.poiSources(west, south, east, north) { out.append((region, false)) }
         return out
     }
 
@@ -981,17 +1000,19 @@ fileprivate final class MapEngine: @unchecked Sendable {
             var sources: [SQLiteDB] = []
             if let db { sources.append(db) }
             if let n = nationalDB { sources.append(n) }
+            let packSources = sources.count
             var d = 0.02
             var rows: [(String?, String?, Double, Double)] = []
             while d < 1.5 && rows.count < limit {
                 rows = []
-                for (si, source) in sources.enumerated() {
+                let all = sources + RegionAtlas.shared.poiSources(lon - d, lat - d, lon + d, lat + d)
+                for (si, source) in all.enumerated() {
                     var found: [(String?, String?, Double, Double)] = []
                     source.each("SELECT cls,name,lon,lat FROM poi WHERE cls=? AND lon BETWEEN ? AND ? AND lat BETWEEN ? AND ?", [cls, lon - d, lon + d, lat - d, lat + d]) { r in
                         found.append((r["cls"]?.text, r["name"]?.text, r["lon"]?.double ?? 0, r["lat"]?.double ?? 0))
                     }
                     let isMain = db != nil && si == 0
-                    if !isMain && db != nil && socalClasses().contains(cls) { found = found.filter { !inSocal($0.2, $0.3) } }
+                    if !isMain && si < packSources && db != nil && socalClasses().contains(cls) { found = found.filter { !inSocal($0.2, $0.3) } }
                     rows += found
                 }
                 var keys: [String] = [], byKey: [String: (String?, String?, Double, Double)] = [:]
@@ -1118,35 +1139,84 @@ fileprivate final class MapEngine: @unchecked Sendable {
         return out.prefix(limit).map { $0.1 }
     }
 
+    /// 'sw1a2aa' -> 'SW1A 2AA'. nil when the words are not a UK postcode. As postcode_form in engine/address_search.py.
+    static func postcodeForm(_ q: String) -> String? {
+        guard let re = try? NSRegularExpression(pattern: #"\A\s*([A-Za-z]{1,2}\d[A-Za-z\d]?)\s*(\d[A-Za-z]{2})\s*\z"#),
+              let m = re.firstMatch(in: q, range: NSRange(q.startIndex..., in: q)),
+              let a = Range(m.range(at: 1), in: q), let b = Range(m.range(at: 2), in: q) else { return nil }
+        return q[a].uppercased() + " " + q[b].uppercased()
+    }
+
+    /// The words of an address with the house number taken out: '10 Downing Street, London' -> 'Downing Street London'.
+    /// The number is written first in Britain, Ireland, France and the US, and after the street in most of Europe
+    /// ('Hauptstraße 12, Berlin'): both are read. nil when nothing but a number was written, or when there is no number.
+    /// As street_only in engine/address_search.py.
+    static func streetOnly(_ q: String) -> String? {
+        let house = #"\d+\s?[a-zA-Z]?(?:\s?[-/]\s?\d+\s?[a-zA-Z]?)?"#       // 10, 10a, 10-12, 12/3
+        let parts = q.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        func without(_ pattern: String, _ s: String) -> String {
+            guard let re = try? NSRegularExpression(pattern: pattern), let m = re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)),
+                  let r = Range(m.range, in: s) else { return s }
+            return s.replacingCharacters(in: r, with: "")
+        }
+        var first = without("\\A" + house + #"\s+(?=\S)"#, parts[0])
+        if first == parts[0] { first = without(#"(?<=\S)\s+"# + house + "\\z", parts[0]) }
+        if first == parts[0] || first.range(of: #"[^\W\d]"#, options: .regularExpression) == nil { return nil }
+        return ([first] + parts.dropFirst()).filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
     static func placeNorm(_ t: String) -> String {
         t.lowercased().replacing(#"[^\w ]+"#, with: " ").replacing(#"\bsaint\b"#, with: "st")
             .split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
-    func places(_ q: String, limit: Int = 20, near: (Double, Double)?) throws -> [[String: Any]] {
-        if AddressSearch.isAddressQuery(q) {
-            return AddressSearch.find(q, limit: min(limit, 8), near: near)
+    func places(_ asked: String, limit: Int = 20, near: (Double, Double)?) throws -> [[String: Any]] {
+        let atlas = RegionAtlas.shared
+        if AddressSearch.isAddressQuery(asked) {
+            let found = AddressSearch.find(asked, limit: min(limit, 8), near: near)
+            if !found.isEmpty || atlas.isEmpty { return found }     // no index of house numbers has it: a region's place finder may still have the street
         }
-        guard let db = placeDB else { return [] }
-        let ws = words(q)
-        if ws.isEmpty { return [] }
+        var q = Self.postcodeForm(asked) ?? asked
+        let placeDBs = (placeDB.map { [$0] } ?? []) + atlas.placeDBs()
+        if placeDBs.isEmpty { return [] }
         typealias PRow = (name: String, kind: SQLiteDB.Value, detail: SQLiteDB.Value, lat: Double, lon: Double, rank: Int64, source: SQLiteDB.Value)
-        var rows: [PRow] = []
-        var full = false
-        for w in Self.wordSets(ws) {
-            if full && w.count < ws.count { break }
-            if w.isEmpty { continue }
-            db.each("SELECT p.name AS name,p.kind AS kind,p.detail AS detail,p.lat AS lat,p.lon AS lon,p.rank AS rank,p.source AS source FROM place_fts f JOIN place p ON p.id=f.rowid "
-                    + "WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200", [Self.ftsQuery(w)]) { r in
-                rows.append((r["name"]?.text ?? "", r["kind"] ?? .null, r["detail"] ?? .null, r["lat"]?.double ?? 0, r["lon"]?.double ?? 0,
-                             r["rank"]?.int ?? 0, r["source"] ?? .null))
-            }
-            if w.count == ws.count { full = !rows.isEmpty }
-        }
         func vk(_ v: SQLiteDB.Value) -> String { "\(v)" }
-        var seenRow = Set<String>(), uniq: [PRow] = []
-        for r in rows where seenRow.insert("\(r.name)\u{1}\(vk(r.kind))\u{1}\(vk(r.detail))\u{1}\(r.lat)\u{1}\(r.lon)\u{1}\(r.rank)\u{1}\(vk(r.source))").inserted { uniq.append(r) }
-        rows = uniq
+        /// (the places whose names hold the words, whether every word was found). As the nested search() of server.py's places().
+        func search(_ text: String) -> ([PRow], Bool) {
+            let ws = words(text)
+            var rows: [PRow] = []
+            var full = false
+            for w in ws.isEmpty ? [] : Self.wordSets(ws) {
+                if full && w.count < ws.count { break }     // every word matched somewhere: no need to loosen
+                if w.isEmpty { continue }
+                for db in placeDBs {
+                    db.each("SELECT p.name AS name,p.kind AS kind,p.detail AS detail,p.lat AS lat,p.lon AS lon,p.rank AS rank,p.source AS source FROM place_fts f JOIN place p ON p.id=f.rowid "
+                            + "WHERE place_fts MATCH ? ORDER BY p.rank, bm25(place_fts) LIMIT 200", [Self.ftsQuery(w)]) { r in
+                        rows.append((r["name"]?.text ?? "", r["kind"] ?? .null, r["detail"] ?? .null, r["lat"]?.double ?? 0, r["lon"]?.double ?? 0,
+                                     r["rank"]?.int ?? 0, r["source"] ?? .null))
+                    }
+                }
+                if w.count == ws.count { full = !rows.isEmpty }
+            }
+            var seenRow = Set<String>(), uniq: [PRow] = []
+            for r in rows where seenRow.insert("\(r.name)\u{1}\(vk(r.kind))\u{1}\(vk(r.detail))\u{1}\(r.lat)\u{1}\(r.lon)\u{1}\(r.rank)\u{1}\(vk(r.source))").inserted { uniq.append(r) }
+            return (uniq, full)
+        }
+        var (rows, full) = search(q)
+        if rows.isEmpty && words(q).isEmpty { return [] }
+        if !full, let street = Self.streetOnly(q) {
+            // No index of house numbers has this address, and no place is called all of it. Where the map is made from OpenStreetMap
+            // alone (anywhere outside the US) the street itself can still be found: show that, and say the house was not.
+            let (found, whole) = search(street)
+            let streets = found.filter { $0.kind.text == "street" }
+            if whole && !streets.isEmpty {
+                q = street
+                rows = streets.map { r in
+                    (name: r.name, kind: r.kind, detail: .text((r.detail.text ?? "") + " · the street: house numbers are not in this map’s data"),
+                     lat: r.lat, lon: r.lon, rank: r.rank, source: r.source)
+                }
+            }
+        }
         let ql = Self.placeNorm(q)
         let nat = nationalDB
         var size: [String: Int] = [:]
@@ -1178,7 +1248,7 @@ fileprivate final class MapEngine: @unchecked Sendable {
             let k = "\(r.name.lowercased())\u{1}\(pyRound(r.lat, 2))\u{1}\(pyRound(r.lon, 2))"
             if !seen.insert(k).inserted { continue }
             out.append(["name": r.name, "kind": r.kind.json, "detail": r.detail.json, "lat": r.lat, "lon": r.lon, "source": r.source.json,
-                        "onMap": pack || (32.5 < r.lat && r.lat < 35.9 && -121.4 < r.lon && r.lon < -114.1)])
+                        "onMap": pack || (32.5 < r.lat && r.lat < 35.9 && -121.4 < r.lon && r.lon < -114.1) || RegionAtlas.shared.contains(r.lon, r.lat)])
             if out.count >= limit { break }
         }
         let water = try waterPlaces(q, near: near)
@@ -1196,11 +1266,13 @@ fileprivate final class MapEngine: @unchecked Sendable {
     }
 
     func mapContents() -> [String: Any] {
+        let regionsNow = RegionAtlas.shared.version()       // a region added or taken away is seen without the app being closed
         lock.lock(); fresh()
-        if let c = _contents { lock.unlock(); return c }
+        if let c = _contents, _contentsFor == regionsNow { lock.unlock(); return c }
         lock.unlock()
-        var kinds = Set<String>()
-        var boxes: [[Double]] = []
+        let atlas = RegionAtlas.shared
+        var kinds = atlas.classes()
+        var boxes: [[Double]] = atlas.regions().map(\.box)
         for db in [mapdb, nationalDB] {
             kinds.formUnion(distinct(db, "SELECT DISTINCT cls FROM poi").compactMap { $0.text })
             if let db, let b = db.one("SELECT MIN(lon) AS a,MIN(lat) AS b,MAX(lon) AS c,MAX(lat) AS d FROM poi"),
@@ -1209,14 +1281,14 @@ fileprivate final class MapEngine: @unchecked Sendable {
             }
         }
         for db in [atlasDB, waterDB, cropDB] { kinds.formUnion(distinct(db, "SELECT DISTINCT kind FROM resource").compactMap { $0.text }) }
-        let contours = distinct(geoDB("terrain.sqlite"), "SELECT 1 FROM tile WHERE z>=11 LIMIT 1").contains { ($0.int ?? 0) != 0 }
+        let contours = distinct(geoDB("terrain.sqlite"), "SELECT 1 FROM tile WHERE z>=11 LIMIT 1").contains { ($0.int ?? 0) != 0 } || atlas.terrainDetail
         var bounds: Any = NSNull()
         if !boxes.isEmpty {
             let b = [boxes.map { $0[0] }.min()!, boxes.map { $0[1] }.min()!, boxes.map { $0[2] }.max()!, boxes.map { $0[3] }.max()!]
             if !(b[2] - b[0] > 90) { bounds = b }
         }
         let c: [String: Any] = ["layers": kinds.sorted(by: pyLess), "bounds": bounds, "detail": !boxes.isEmpty, "contours": contours]
-        lock.lock(); _contents = c; lock.unlock()
+        lock.lock(); _contents = c; _contentsFor = regionsNow; lock.unlock()
         return c
     }
 
@@ -1296,15 +1368,57 @@ fileprivate final class MapEngine: @unchecked Sendable {
             geoList.append(["label": "Aerial photos, whole US (USGS The National Map: USDA NAIP and other orthoimagery)", "status": "Zoom 0-15 nationwide, 16 in California and towns · downloading"])
         }
         var out: [String: Any] = ["aerial": hasAerial()]
-        if packTruthy() {
+        let atlas = RegionAtlas.shared
+        let pack = packTruthy(), regions = !atlas.isEmpty
+        if pack || regions {
             let c = mapContents()
             for (k, v) in c { out[k] = v }
-            geoList = packDatasets(c)
+            let legacy = mapdb != nil || nationalDB != nil
+            geoList = (regions ? regionDatasets() : []) + (pack && (legacy || !regions) ? packDatasets(c) : legacy && !pack ? geoList : [])
+        }
+        if regions {
+            // Regions built for anywhere in the world: the page lists them, measures in kilometres unless told otherwise, and credits their sources.
+            out["regions"] = atlas.summary(); out["units"] = "metric"
+            out["data_as_of"] = atlas.dataAsOf().map { $0 as Any } ?? NSNull()
+            out["credits"] = atlas.credits()
+            out["terrain_levels"] = atlas.hasTerrain ? ["detail": 12, "overview": 9] as Any : NSNull()
         }
         var nat: [String: Any] = [:]
         for (k, v) in status where k != "source" && k != "database" { nat[k] = v }
         out["meta"] = metaOut; out["datasets"] = geoList; out["national"] = nat; out["version"] = dataVersion()
         out["aerial_detail"] = detail; out["aerial_rev"] = rev; out["terrain_circle"] = tdetail
+        return out
+    }
+
+    /// The panel beside the map, for regions built from open data: each detailed region by name, the outlines together. As server.py's region_datasets.
+    func regionDatasets() -> [[String: Any]] {
+        var out: [[String: Any]] = []
+        let rs = RegionAtlas.shared.regions()
+        func num(_ v: Any?) -> Int { (v as? NSNumber)?.intValue ?? 0 }
+        func bytes(_ r: RegionAtlas.Region) -> Int { ((r.info["bytes"] as? [String: Any]) ?? [:]).values.reduce(0) { $0 + num($1) } }
+        for r in rs where r.level == "detail" {
+            let c = (r.info["counts"] as? [String: Any]) ?? [:]
+            let finder = (c["finder"] as? [String: Any]) ?? [:]
+            let day = String(r.dataAsOf.prefix(10))
+            var bits = [day.isEmpty ? "" : "mapped by \(day)", "\(commas(num(c["features"]))) features", "\(commas(num(c["pois"]))) help points"]
+            if num(finder["streets"]) != 0 {
+                bits.append("\(commas(num(finder["streets"]))) streets" + (num(finder["postcodes"]) != 0 ? " and \(commas(num(finder["postcodes"]))) postcodes" : "") + " in Find a place")
+            }
+            if r.hasTerrain { bits.append("elevation: relief, contours, 3D") }
+            out.append(["label": "\(r.name): every street and path, buildings, land, water, places and help points (OpenStreetMap)",
+                        "status": bits.filter { !$0.isEmpty }.joined(separator: " · "), "bytes": bytes(r), "region": r.id])
+        }
+        let over = rs.filter { $0.level == "overview" }
+        if !over.isEmpty {
+            let days = over.map { String($0.dataAsOf.prefix(10)) }.filter { !$0.isEmpty }.sorted()
+            out.append(["label": "Main roads, towns, rivers, lakes and every help point for \(over.count) more region\(over.count == 1 ? "" : "s") (OpenStreetMap)",
+                        "status": over.map(\.name).joined(separator: ", ") + (days.first.map { " · mapped by \($0)" } ?? "") + ". Side streets and buildings are not in these.",
+                        "bytes": over.reduce(0) { $0 + bytes($1) }])
+        }
+        if rs.contains(where: { $0.hasTerrain }) {
+            out.append(["label": "Elevation (Copernicus DEM, European Space Agency)",
+                        "status": "About 30 m in the detailed regions, 90 m elsewhere. A surface model: it includes treetops and roofs."])
+        }
         return out
     }
 

@@ -403,7 +403,7 @@ final class Download: NSObject, URLSessionDataDelegate, @unchecked Sendable {
              .clientCertificateRejected, .secureConnectionFailed:
             failure = Self.tlsError
         case .notConnectedToInternet, .dataNotAllowed, .internationalRoamingOff:
-            failure = Transient(why: "this iPad is offline")
+            failure = Transient(why: "this \(Device.name) is offline")
         default:
             failure = Transient(why: e.localizedDescription)
         }

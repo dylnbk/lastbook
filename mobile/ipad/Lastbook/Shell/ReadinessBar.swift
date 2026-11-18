@@ -20,7 +20,7 @@ struct ReadinessBar: View {
                             Text(r.preparing[0].title).font(.body.weight(.medium))
                         } else {
                             Image(systemName: "exclamationmark.circle").font(.title3)
-                            Text(r.missing.count == 1 ? r.missing[0].title : "\(r.missing.count) things aren't ready on this iPad yet")
+                            Text(r.missing.count == 1 ? r.missing[0].title : "\(r.missing.count) things aren't ready on this \(Device.name) yet")
                                 .font(.body.weight(.medium))
                             if let p = r.preparing.first { Text("· " + p.title).font(.body).foregroundStyle(.secondary) }
                         }
@@ -66,7 +66,7 @@ struct ReadinessList: View {
                     }
                 }.padding(.vertical, 6)
             }
-            .navigationTitle("On this iPad")
+            .navigationTitle("On this \(Device.name)")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Install or change…") { manage() } }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }

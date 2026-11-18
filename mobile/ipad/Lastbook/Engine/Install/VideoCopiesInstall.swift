@@ -19,7 +19,7 @@ enum VideoCopiesInstall {
     @discardableResult
     static func install(zip: URL, root: URL, needed: Bool = VideoCompat.shared.needsH264,
                         progress: (Int64, Int64) -> Void = { _, _ in }, isCancelled: () -> Bool = { false }) throws -> (Int, Int64) {
-        guard needed else { throw InstallError.notNeeded("This iPad plays the original AV1 videos, so it doesn’t need the H.264 copies.") }
+        guard needed else { throw InstallError.notNeeded("This \(Device.name) plays the original AV1 videos, so it doesn’t need the H.264 copies.") }
         let z = try ZipInstall.open(zip, what: "video copies download")
         let (members, total) = try ZipInstall.checkZip(z, installedBytes: nil, allowed: allowed,
                                                        notAllowed: { InstallError.notAMap("The video copies download holds a file that is not a video copy (\($0)).") })

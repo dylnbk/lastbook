@@ -259,15 +259,31 @@ struct CRC32 {
         var c = ~value
         var i = 0
         let n = buf.count
-        Self.flat.withUnsafeBufferPointer { t in
+        Self.flat.withUnsafeBufferPointer { (t: UnsafeBufferPointer<UInt32>) -> Void in
             while i + 8 <= n {
-                let a = c ^ (UInt32(base[i]) | UInt32(base[i + 1]) << 8 | UInt32(base[i + 2]) << 16 | UInt32(base[i + 3]) << 24)
-                let b = UInt32(base[i + 4]) | UInt32(base[i + 5]) << 8 | UInt32(base[i + 6]) << 16 | UInt32(base[i + 7]) << 24
-                c = t[7 * 256 + Int(a & 0xFF)] ^ t[6 * 256 + Int((a >> 8) & 0xFF)] ^ t[5 * 256 + Int((a >> 16) & 0xFF)] ^ t[4 * 256 + Int(a >> 24)]
-                  ^ t[3 * 256 + Int(b & 0xFF)] ^ t[2 * 256 + Int((b >> 8) & 0xFF)] ^ t[1 * 256 + Int((b >> 16) & 0xFF)] ^ t[Int(b >> 24)]
+                // A step at a time, each with its type said. Written as three long expressions, the compiler in Xcode 16.4
+                // (Swift 6.1) gave up on this closure: "unable to type-check this expression in reasonable time".
+                let b0 = UInt32(base[i]), b1 = UInt32(base[i + 1]), b2 = UInt32(base[i + 2]), b3 = UInt32(base[i + 3])
+                let b4 = UInt32(base[i + 4]), b5 = UInt32(base[i + 5]), b6 = UInt32(base[i + 6]), b7 = UInt32(base[i + 7])
+                let lo: UInt32 = b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+                let a: UInt32 = c ^ lo
+                let b: UInt32 = b4 | (b5 << 8) | (b6 << 16) | (b7 << 24)
+                let x7: UInt32 = t[7 * 256 + Int(a & 0xFF)]
+                let x6: UInt32 = t[6 * 256 + Int((a >> 8) & 0xFF)]
+                let x5: UInt32 = t[5 * 256 + Int((a >> 16) & 0xFF)]
+                let x4: UInt32 = t[4 * 256 + Int(a >> 24)]
+                let x3: UInt32 = t[3 * 256 + Int(b & 0xFF)]
+                let x2: UInt32 = t[2 * 256 + Int((b >> 8) & 0xFF)]
+                let x1: UInt32 = t[1 * 256 + Int((b >> 16) & 0xFF)]
+                let x0: UInt32 = t[Int(b >> 24)]
+                c = x7 ^ x6 ^ x5 ^ x4 ^ x3 ^ x2 ^ x1 ^ x0
                 i += 8
             }
-            while i < n { c = t[Int((c ^ UInt32(base[i])) & 0xFF)] ^ (c >> 8); i += 1 }
+            while i < n {
+                let at = Int((c ^ UInt32(base[i])) & 0xFF)
+                c = t[at] ^ (c >> 8)
+                i += 1
+            }
         }
         value = ~c
     }
