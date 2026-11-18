@@ -95,6 +95,8 @@ def note(d):
 note({'argv': a, 'pid': os.getpid()})
 if int(arg('-c', '0')) > int(os.environ.get('FAKE_LLAMA_MAX_CTX', '999999')):
     sys.exit(1)             # as a model too large for the memory there is
+if os.environ.get('FAKE_LLAMA_NO_DRAFT') and '-md' in a:
+    sys.exit(1)             # as a llama-server that cannot use this model's draft file
 time.sleep(float(os.environ.get('FAKE_LLAMA_LOAD_S', '0.1')))
 script = json.loads(os.environ.get('FAKE_LLAMA_SCRIPT', '[]'))
 turn = [0]

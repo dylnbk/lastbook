@@ -126,6 +126,7 @@ class Runner:
         self.state, self.message = 'stopped', ''
         self.proc = self.model_id = self.sock = self.port = self.key = self.folder = None
         self.context = None
+        self.draft = False          # is the running model using its draft file
         self.last_used = 0
         self.started_at = 0
         self.load_s = None
@@ -134,19 +135,26 @@ class Runner:
     # ---------------------------------------------------------------------------------------------------- status ----
     def status(self):
         with self.lock:
-            return {'state': self.state, 'message': self.message, 'model': self.model_id, 'context': self.context, 'load_s': self.load_s}
+            return {'state': self.state, 'message': self.message, 'model': self.model_id, 'context': self.context, 'load_s': self.load_s,
+                    'draft': bool(self.draft) and self.state in ('ready', 'loading')}
 
     def running(self, model_id=None):
         with self.lock:
             return self.state == 'ready' and self.proc is not None and self.proc.poll() is None and (model_id is None or model_id == self.model_id)
 
     # ------------------------------------------------------------------------------------------------- starting ----
-    def argv(self, server, model, ctx):
+    @staticmethod
+    def drafts(server, model):
+        """Can this llama-server use the model's draft file (the small model that lets a large one write faster)?"""
+        known = flags(server)
+        return bool(model.get('draft')) and '--spec-type' in known and '-md' in known
+
+    def argv(self, server, model, ctx, draft=True):
         known = flags(server)
         a = [server, '-m', model['path'], '-c', str(ctx), '-np', '1']
         if model.get('projector'):
             a += ['--mmproj', model['projector']]
-        if model.get('draft') and '--spec-type' in known and '-md' in known:
+        if draft and self.drafts(server, model):
             a += ['-md', model['draft'], '--spec-type', 'draft-mtp']
         for flag, value in (('-ngl', '999'), ('--jinja', None), ('--no-webui', None), ('--offline', None), ('--no-slots', None)):
             if flag in known:
@@ -224,7 +232,12 @@ class Runner:
                     return short
                 self._stop_locked('another model was chosen')
                 contexts = [c for c in gguf.CONTEXTS if c <= ((model.get('fit') or {}).get('context') or gguf.CONTEXTS[0])] or [gguf.CONTEXTS[-1]]
-                self._spawn(server['path'], model, contexts)
+                # What is tried, in turn, until the model loads: first as wanted; then without its draft file (a speed-up this
+                # llama-server may not manage for this model); then with smaller and smaller contexts (memory).
+                tries = [(c, False) for c in contexts]
+                if self.drafts(server['path'], model):
+                    tries.insert(0, (contexts[0], True))
+                self._spawn(server['path'], model, tries)
         t0 = time.time()
         while time.time() - t0 < START_WAIT:
             with self.lock:
@@ -241,8 +254,10 @@ class Runner:
         self.stop('took too long to start')
         return 'The AI model took too long to start.'
 
-    def _spawn(self, server, model, contexts):
-        self.state, self.message, self.model_id, self.context = 'loading', '', model['id'], contexts[0]
+    def _spawn(self, server, model, tries):
+        """tries: [(context, with the draft file)], the first of which is started now."""
+        ctx, draft = tries[0]
+        self.state, self.message, self.model_id, self.context, self.draft = 'loading', '', model['id'], ctx, draft
         self.started_at = time.time()
         self._listen_at()
         logs = self.data / 'derived' / 'logs'
@@ -251,8 +266,8 @@ class Runner:
             err = open(logs / 'ai-runtime.log', 'ab')
         except OSError:
             err = open(os.devnull, 'wb')
-        argv = self.argv(server, model, contexts[0])
-        err.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} start: {Path(model["path"]).name}, context {contexts[0]}\n'.encode())
+        argv = self.argv(server, model, ctx, draft)
+        err.write(f'\n--- {time.strftime("%Y-%m-%d %H:%M:%S")} start: {Path(model["path"]).name}, context {ctx}{", with its draft" if draft else ""}\n'.encode())
         err.flush()
         try:
             if os.name == 'nt':
@@ -274,23 +289,26 @@ class Runner:
             return
         finally:
             err.close()
-        threading.Thread(target=self._wait_ready, args=(self.proc, server, model, contexts), daemon=True, name='ai-runtime-wait').start()
+        threading.Thread(target=self._wait_ready, args=(self.proc, server, model, tries), daemon=True, name='ai-runtime-wait').start()
         if not self._watching:
             self._watching = True
             atexit.register(self.stop, 'Lastbook is closing')
             threading.Thread(target=self._idle_watch, daemon=True, name='ai-runtime-idle').start()
 
-    def _wait_ready(self, proc, server, model, contexts):
-        """Asks /health until it says ok. If the program ends first, the next smaller context is tried: memory was the likeliest cause."""
+    def _wait_ready(self, proc, server, model, tries):
+        """Asks /health until it says ok. If the program ends first, the next way is tried: without the draft file, then with a
+        smaller context (memory was the likeliest cause)."""
         while True:
             if proc.poll() is not None:
                 with self.lock:
                     if self.proc is not proc:
                         return
                     self.proc = None
-                    if len(contexts) > 1 and self.state == 'loading':
-                        print(f'AI runtime: the model did not load with a context of {contexts[0]}; trying {contexts[1]}', flush=True)
-                        self._spawn(server, model, contexts[1:])
+                    if len(tries) > 1 and self.state == 'loading':
+                        was, now = tries[0], tries[1]
+                        print('AI runtime: the model did not load ' + (f'with its draft file; trying without' if was[1] and not now[1] and was[0] == now[0]
+                              else f'with a context of {was[0]}; trying {now[0]}'), flush=True)
+                        self._spawn(server, model, tries[1:])
                     elif self.state == 'loading':
                         self.state = 'error'
                         self.message = 'The model could not be loaded. It may need more memory than is free: close other programs and ask again.'

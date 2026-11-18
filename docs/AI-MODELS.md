@@ -19,7 +19,7 @@ asks questions and does not choose what answers them).
 | A model in the library | A `.gguf` under `<library>/models/`. It travels with the library, so a drive answers on any computer it is plugged into |
 | A model already on this computer | One that AnythingLLM, LM Studio, Ollama or the Hugging Face cache holds. Used where it is: nothing is copied, moved or changed. Used only when chosen |
 | The stock model | Gemma 4 26B through `lastbook-llm`, where that is installed |
-| A model server on this computer | As before: an OpenAI-shaped server on a loopback address (`SURVIVAL_MODEL_BASE`) |
+| A model server on this computer | An OpenAI-shaped server on a loopback address: `SURVIVAL_MODEL_BASE` as before, or a port typed in the picker (Ollama listens on 11434, LM Studio on 1234). Only a port is taken, never an address: it is always this computer |
 | No AI | Chat shows the matching pages and writes nothing |
 
 A model another program holds can be **copied into the library** from the picker, and so can the program that runs
@@ -35,9 +35,16 @@ The picker offers three by name and takes any repository pasted as `owner/name` 
 
 | Offered | Repository | Size | For |
 |---|---|---|---|
-| Small and quick | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | about 3.3 GB | 8 GB of memory |
-| Balanced | `unsloth/gemma-4-12B-it-GGUF` | about 7.5 GB | 16 GB |
-| Largest | `unsloth/gemma-4-26B-A4B-it-GGUF` | about 17 GB | 32 GB |
+| Compact | `Qwen/Qwen3-VL-4B-Instruct-GGUF` | about 3.3 GB | 8 GB of memory or more |
+| Balanced | `HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced` | about 7.8 GB with its draft file | 16 GB or more |
+| Workstation | `unsloth/gemma-4-26B-A4B-it-GGUF` | about 18 GB | 24 GB or more |
+
+All three read page images. The Balanced one is a community retraining of Gemma 4 12B that declines fewer
+questions; Google's own conversion is `unsloth/gemma-4-12B-it-GGUF`, which can be pasted instead. Sizes and fit are
+read live from the repository when one is looked at, so they are never out of date here.
+
+A version too large for this computer can still be brought, with a plain warning beside it: a library on a drive
+may be meant for a computer with more memory. It is not chosen to answer on this one.
 
 **Look** asks Hugging Face what the repository holds: two small lists and the first 64 KB of one file, three requests
 in all. It shows every version with its size and whether it fits this computer, the projector file (which lets the
@@ -66,11 +73,19 @@ five times too large.
 
 | Model | Context | Estimated | Measured |
 |---|---|---|---|
-| Qwen3-VL 4B Q4_K_M (2.5 GB) | 8,192 | 4.4 GB | 4.4 GB |
+| Qwen3-VL 4B Q4_K_M (2.5 GB) with its projector (0.84 GB) | 8,192 | 5.2 GB | 4.4 GB |
+
+One measurement, and the estimate was 0.8 GB high: about the size of the projector, which the estimate counts whole
+on top of everything else. It errs towards saying a model is too large rather than towards starting one that is. It
+has not been checked against a Gemma model's measured memory.
 
 The estimate picks the largest context that fits (16,384 down to 6,144 tokens; the assistant's prompt with its
 sources needs about 6,000) and keeps 2.5 GB back for the system and the rest of Lastbook. It is an estimate.
 llama.cpp decides when the model loads, and if it will not load, the next smaller context is tried.
+
+Fitting the computer is not the same as there being room at this moment. A model is not started when the memory
+free right now is under three quarters of what it uses: it would load by pushing other programs into the swap file,
+and the whole computer crawls while it does. The person is told how much is free and asked to close something.
 
 On Windows and Linux with a graphics card, the card's memory counts as room beyond the computer's own. That part
 follows the existing hardware detection and has not been run on such a machine.
@@ -91,6 +106,7 @@ By llama.cpp's own `llama-server`, started when someone asks a question and stop
   offered `view_page` and can look at a page's image; one without is told it reads text only.
 - **Thinking** is turned off where the model's template has a switch for it, and anything between `<think>` marks is
   never shown: someone in trouble should not wait through a page of reasoning.
+- **If it will not load**, it is tried again without its draft file, then with smaller contexts, before saying so.
 
 ## What was measured, and what was not
 

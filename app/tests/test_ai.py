@@ -30,6 +30,7 @@ from test_portable import ask  # noqa: E402
 
 from engine.setup import hardware as _hardware  # noqa: E402
 FREE_NOW = _hardware.available_ram      # the real one: tests replace it so that what is free today decides nothing
+REAL_SERVER_ONLINE = assistant._server_online
 GiB = 2 ** 30
 POSIX = os.name != 'nt'
 
@@ -316,8 +317,19 @@ class Running(Temp):
         r, model = self.start(FAKE_LLAMA_MAX_CTX=8192)
         self.assertIsNone(r.ensure(model))
         self.assertEqual(r.status()['context'], 8192)
-        tried = [int(x['argv'][x['argv'].index('-c') + 1]) for x in aikit.recorded(self.record) if 'argv' in x]
-        self.assertEqual(tried, [16384, 12288, 8192])
+        tried = [(int(x['argv'][x['argv'].index('-c') + 1]), '-md' in x['argv']) for x in aikit.recorded(self.record) if 'argv' in x]
+        self.assertEqual(tried, [(16384, True), (16384, False), (12288, False), (8192, False)])      # first without the draft, then smaller
+
+    def test_a_draft_file_this_llama_server_cannot_use_is_left_out(self):
+        r, model = self.start(FAKE_LLAMA_NO_DRAFT=1)
+        self.assertIsNone(r.ensure(model))
+        self.assertEqual((r.status()['context'], r.status()['draft']), (16384, False))
+        self.assertEqual(['-md' in x['argv'] for x in aikit.recorded(self.record) if 'argv' in x], [True, False])
+        r.stop('again')
+        self.record.unlink()
+        with mock.patch.dict(os.environ, {'FAKE_LLAMA_NO_DRAFT': ''}):
+            self.assertIsNone(r.ensure(model))
+            self.assertTrue(r.status()['draft'])                                  # where it can be used, it is
 
     def test_a_model_that_never_loads_says_so(self):
         r, model = self.start(FAKE_LLAMA_MAX_CTX=100)
@@ -530,6 +542,51 @@ class Answering(Temp):
             self.assertEqual(assistant.backend(), ('server', None))
         self.p.select('server')
         self.assertEqual(assistant.backend()[0], 'picked')              # the server is not there: Lastbook chooses by itself
+
+    def test_a_model_server_on_a_port_of_the_persons_own(self):
+        """Ollama, LM Studio and others answer in the same shape on their own ports: the person gives the port, never an address."""
+        asked = []
+
+        class Answer:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, *a):
+                return self.body
+
+        def model_open(req, timeout):
+            url = req if isinstance(req, str) else req.full_url
+            asked.append(url)
+            if url == 'http://127.0.0.1:11434/v1/models':
+                return Answer(json.dumps({'data': [{'id': 'gemma3:12b'}, {'id': 'qwen3:4b'}]}).encode())
+            raise OSError('nothing there')
+        self.assertEqual(assistant._server(), (assistant.BASE, assistant.MODEL))
+        with mock.patch.object(assistant, '_server_online', REAL_SERVER_ONLINE), mock.patch.object(assistant, 'model_open', model_open), \
+                mock.patch.dict(assistant._status, {'at': 0, 'base': None}):
+            self.p.select('server', port=11434)
+            self.assertEqual(assistant._server(), ('http://127.0.0.1:11434', None))
+            self.assertEqual(assistant.backend(), ('server', None))
+            st = assistant.model_status()
+            self.assertEqual((st['online'], st['model']), (True, 'gemma3:12b'))       # the first model it lists
+            self.assertEqual(asked, ['http://127.0.0.1:11434/v1/models'])
+            view = assistant.picker_view()
+            self.assertEqual((view['server']['port'], view['server']['chosen_port'], view['server']['online'], view['active']), (11434, 11434, True, 'server'))
+            self.p.select('server', port=1234)                                        # nothing answers there
+            self.assertEqual(assistant.backend(), ('none', None))
+        for bad in (80, 70000, 'abc', '11434; rm', -1, True, 1.5):
+            with self.assertRaises(ValueError, msg=repr(bad)):
+                self.p.select('server', port=bad)
+        self.assertEqual(self.p.select('server'), {'id': 'server'})                   # no port: the one Lastbook has always looked at
+        self.assertEqual(assistant._server(), (assistant.BASE, assistant.MODEL))
+        (self.data / 'derived/llm/picked.json').write_text(json.dumps({'id': 'server', 'port': 'http://evil.example'}))
+        self.p._choice = None
+        self.assertEqual(assistant._server(), (assistant.BASE, assistant.MODEL))      # a file that was tampered with names no other computer
 
     def test_no_ai_means_none(self):
         self.model()
@@ -883,7 +940,8 @@ class Brought(Temp):
         self.assertTrue(d.is_dir())                                     # never the models folder itself
 
     def test_the_three_offered_by_name_are_real_repository_names(self):
-        self.assertEqual([p['id'] for p in hf_import.PRESETS], ['small', 'middle', 'large'])
+        self.assertEqual([p['id'] for p in hf_import.PRESETS], ['compact', 'balanced', 'workstation'])
+        self.assertEqual(hf_import.PRESETS[1]['repo'], 'HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced')
         for p in hf_import.PRESETS:
             repo, quant = hf_import.parse(f"{p['repo']}:{p['quant']}")
             self.assertEqual(repo, p['repo'])
@@ -1027,7 +1085,7 @@ class Requests(Temp):
         d = json.loads(raw)
         self.assertEqual((status, d['available'], d['selected'], d['active']), (200, True, 'auto', 'drive:talker-Q4_K_M.gguf'))
         self.assertEqual([m['name'] for m in d['models']], ['Talker Q4_K_M'])
-        self.assertEqual([p['id'] for p in d['presets']], ['small', 'middle', 'large'])
+        self.assertEqual([p['id'] for p in d['presets']], ['compact', 'balanced', 'workstation'])
         self.assertEqual(d['bringing'], {'state': 'idle'})
         self.assertNotIn(str(self.tmp), raw.decode())
         with mock.patch.object(server, 'LAN_KEY', 'k' * 24):

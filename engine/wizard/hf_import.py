@@ -34,12 +34,12 @@ SPARE = 2 * 2**30           # room left on the drive after a model is brought
 # Three models offered without the person having to know a repository's name: small, middle and large. Each is the
 # publisher's or a well-known converter's own repository; inspect() reads it live, so sizes and fit are never out of date.
 PRESETS = [
-    {'id': 'small', 'repo': 'Qwen/Qwen3-VL-4B-Instruct-GGUF', 'quant': 'Q4_K_M', 'title': 'Small and quick',
-     'about': 'Qwen3-VL 4B. About 3.3 GB. Runs on most computers with 8 GB of memory. Reads page images as well as text.'},
-    {'id': 'middle', 'repo': 'unsloth/gemma-4-12B-it-GGUF', 'quant': 'Q4_K_M', 'title': 'Balanced',
-     'about': 'Gemma 4 12B. About 7.5 GB. For a computer with 16 GB of memory. Better answers; reads page images.'},
-    {'id': 'large', 'repo': 'unsloth/gemma-4-26B-A4B-it-GGUF', 'quant': 'UD-Q4_K_M', 'title': 'Largest',
-     'about': 'Gemma 4 26B, the model Lastbook was made and tested with. About 17 GB. For a computer with 32 GB of memory.'},
+    {'id': 'compact', 'repo': 'Qwen/Qwen3-VL-4B-Instruct-GGUF', 'quant': 'Q4_K_M', 'title': 'Compact', 'draft': False,
+     'about': 'Qwen3-VL 4B. About 3.3 GB. For a computer with 8 GB of memory or more. Reads page images as well as text.'},
+    {'id': 'balanced', 'repo': 'HauhauCS/Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced', 'quant': 'Q4_K_M', 'title': 'Balanced', 'draft': True,
+     'about': 'Gemma 4 12B (a community retraining that declines less). About 7.8 GB with its speed-up file. For 16 GB of memory or more. Reads page images.'},
+    {'id': 'workstation', 'repo': 'unsloth/gemma-4-26B-A4B-it-GGUF', 'quant': 'UD-Q4_K_M', 'title': 'Workstation', 'draft': False,
+     'about': 'Gemma 4 26B, the model Lastbook was made and tested with. About 18 GB. For 24 GB of memory or more. Reads page images.'},
 ]
 
 

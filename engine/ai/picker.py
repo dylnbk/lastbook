@@ -45,13 +45,18 @@ class Picker:
                 self._choice = {'id': 'auto'}
         return self._choice
 
-    def select(self, model_id):
-        """Keeps the choice. Raises KeyError for a model that is not here."""
+    def select(self, model_id, port=None):
+        """Keeps the choice. Raises KeyError for a model that is not here, ValueError for a port that is not one.
+        port: with 'server', the loopback port the person's own model server listens on (Ollama 11434, LM Studio 1234)."""
         if model_id not in FIXED:
             m = self.model(model_id)
             if m is None:
                 raise KeyError(model_id)
             choice = {'id': model_id, 'name': m['name'], 'where': m['where']}
+        elif model_id == 'server' and port not in (None, ''):
+            if isinstance(port, bool) or not str(port).isdigit() or not 1024 <= int(port) <= 65535:
+                raise ValueError('a port is a number from 1024 to 65535')
+            choice = {'id': 'server', 'port': int(port)}
         else:
             choice = {'id': model_id}
         self._choice = choice

@@ -52,13 +52,15 @@ const Models = (() => {
         ${drive.length ? `<div class="mp-h">${travels}</div>${drive.map(modelRow).join('')}` : ''}
         ${here.length ? `<div class="mp-h">Already on this computer</div>${here.map(modelRow).join('')}` : ''}
         ${stock ? row('stock', view.stock.name, 'The model Lastbook was made with. Reads text only.') : ''}
-        ${server ? row('server', 'A model server running on this computer', esc(view.server.model)) : ''}
+        ${row('server', 'A model server already running on this computer', `${server ? `<span class="mp-tag ok">Answering on port ${view.server.port}</span> ${esc(view.server.model || '')}` : `<span class="mp-tag">Nothing answers on port ${view.server.port}</span>`}
+          <span class="mp-port">Ollama uses port 11434, LM Studio 1234. Port <input id="mpPort" inputmode="numeric" size="6" maxlength="5" value="${view.server.chosen_port || ''}" placeholder="${view.server.port}" aria-label="Port of the model server on this computer"> <button class="linkish" id="mpPortUse">Use this port</button></span>`,
+          { off: !server && view.selected !== 'server' })}
         ${row('none', 'No AI', 'Chat shows the matching pages and writes nothing. Search, guides, videos and the map are the same.')}
       </fieldset>
       ${run.state === 'ready' || run.state === 'loading' ? `<p class="mp-run"><span class="dotok"></span>${run.state === 'ready' ? `Loaded and holding memory${run.load_s ? ` (it took ${run.load_s} s to start)` : ''}. It lets go by itself after 15 minutes unused.` : 'Starting…'} <button class="btn plain small" id="mpStop">Let it go now</button></p>` : ''}
       <fieldset class="mp-set"><legend>Add a model</legend>
         <p class="small muted" style="margin:0 0 8px">From Hugging Face, into this library’s <code>models</code> folder. This is the one thing here that uses the internet, and only when you press a button.</p>
-        <div class="mp-presets">${(view.presets || []).map(p => `<button class="mp-preset" data-repo="${esc(p.repo)}:${esc(p.quant)}"><b>${esc(p.title)}</b><small>${esc(p.about)}</small></button>`).join('')}</div>
+        <div class="mp-presets">${(view.presets || []).map(p => `<button class="mp-preset" data-repo="${esc(p.repo)}:${esc(p.quant)}"${p.draft ? ' data-draft="1"' : ''}><b>${esc(p.title)}</b><small>${esc(p.about)}</small></button>`).join('')}</div>
         <form class="mp-form" id="mpForm"><label class="sr" for="mpRepo">A Hugging Face repository, as owner/name</label>
           <input id="mpRepo" placeholder="Or paste a Hugging Face repository: owner/name" autocomplete="off" spellcheck="false" autocapitalize="off">
           <button class="btn plain">Look</button></form>
@@ -66,6 +68,10 @@ const Models = (() => {
       </fieldset>
       <p class="small muted">${view.runtime ? `Models are run by llama.cpp’s <code>llama-server</code>, from ${esc(view.runtime.origin)}.${/library|Lastbook/.test(view.runtime.origin) ? '' : ` <button class="linkish" id="mpCarry">Put a copy ${here()}</button>, for other computers of this kind.`} ` : ''}<button class="linkish" id="mpLook">Look again for models</button></p>`;
     box.querySelectorAll('input[name=mp]').forEach(i => i.onchange = () => choose(i.value));
+    const port = box.querySelector('#mpPort'), usePort = e => { e.preventDefault(); if (/^\d{4,5}$/.test(port.value.trim())) choose('server', +port.value.trim()); else toast('A port is a number, like 11434') };
+    box.querySelector('#mpPortUse').onclick = usePort;
+    port.onkeydown = e => { if (e.key === 'Enter') usePort(e) };
+    port.onclick = e => e.preventDefault();     // inside the row's label: typing a port is not choosing the row
     box.querySelectorAll('[data-remove]').forEach(b => b.onclick = e => { e.preventDefault(); remove(b.dataset.remove) });
     box.querySelectorAll('[data-carry]').forEach(b => b.onclick = async e => {
       e.preventDefault();
@@ -78,15 +84,15 @@ const Models = (() => {
       if (!r.ok) { toast(r.data.error || 'It could not be copied'); carry.disabled = false; return }
       view = r.data; render(); toast('Copied');
     };
-    box.querySelectorAll('.mp-preset').forEach(b => b.onclick = () => look(b.dataset.repo));
+    box.querySelectorAll('.mp-preset').forEach(b => b.onclick = () => look(b.dataset.repo, b.dataset.draft));
     box.querySelector('#mpForm').onsubmit = e => { e.preventDefault(); const v = box.querySelector('#mpRepo').value.trim(); if (v) look(v) };
     box.querySelector('#mpLook').onclick = async () => { await info(true); render(); toast('Looked again') };
     const stop = box.querySelector('#mpStop'); if (stop) stop.onclick = async () => { const r = await post('/api/ai/stop'); if (r.ok) { view = r.data; render(); changed() } };
     renderFound();
   }
   function changed() { if (onChange) onChange() }
-  async function choose(id) {
-    const r = await post('/api/ai/select', { id });
+  async function choose(id, port) {
+    const r = await post('/api/ai/select', port ? { id, port } : { id });
     if (!r.ok) { toast(r.data.error || 'That could not be chosen'); await info(true) } else view = r.data;
     render(); changed();
   }
@@ -99,13 +105,14 @@ const Models = (() => {
   }
 
   // ------------------------------------------------------------ bringing a model ----
-  async function look(repo) {
+  async function look(repo, wantDraft) {
     const el = box.querySelector('#mpFound'); found = null;
     el.innerHTML = '<p class="muted small">Asking Hugging Face what is in it…</p>';
     const r = await post('/api/ai/inspect', { repo });
     if (!box) return;
     if (!r.ok) { el.innerHTML = `<p class="mp-warn">${esc(r.data.error || 'Hugging Face could not be reached.')}</p>`; return }
-    found = r.data; found.pick = found.recommended; renderFound();
+    found = r.data; found.pick = found.recommended; found.wantDraft = !!wantDraft; renderFound();
+    el.scrollIntoView({ block: 'nearest' });
   }
   function renderFound() {
     const el = box && box.querySelector('#mpFound'); if (!el) return;
@@ -123,11 +130,11 @@ const Models = (() => {
     const free = f.free_bytes != null ? `${size(f.free_bytes)} free on the library’s drive.` : '';
     el.innerHTML = `${note}<div class="mp-found"><b>${esc(f.name)}</b>
       <small>${esc(f.repo)}${f.license ? ' · licence: ' + esc(f.license) : ''} · ${f.vision ? 'reads page images' : 'reads text only'}${f.judged ? '' : ' · its size could not be judged from its header'}</small>
-      ${none ? '<p class="mp-warn">No version of this model fits this computer’s memory. A smaller model will.</p>' : ''}
-      <div class="mp-versions">${f.versions.map(v => `<label class="mp-row${v.fit.fits === false ? ' off' : ''}"><input type="radio" name="mpv" value="${esc(v.name)}"${v.name === f.pick ? ' checked' : ''}${v.fit.fits === false ? ' disabled' : ''}>
+      ${none ? '<p class="mp-warn">No version of this model fits this computer’s memory. A smaller model will. One can still be brought for a computer with more memory, if this library travels.</p>' : ''}
+      <div class="mp-versions">${f.versions.map(v => `<label class="mp-row"><input type="radio" name="mpv" value="${esc(v.name)}"${v.name === f.pick ? ' checked' : ''}>
         <span class="mp-what"><b>${esc(v.quant || v.name)}${v.name === f.recommended ? ' <i class="mp-now">suggested</i>' : ''}</b>
-        <small>${fitTag(v.fit)} ${size(v.total_bytes)} to bring${v.coarse ? ' · very compressed: answers are noticeably worse' : ''}${v.fit.fits === false ? '' : ' · ' + esc(v.fit.why)}</small></span></label>`).join('')}</div>
-      ${f.draft ? `<label class="mp-opt"><input type="checkbox" id="mpDraft"> Also bring its speed-up file (${size(f.draft.bytes)}; used where this computer’s llama.cpp supports it)</label>` : ''}
+        <small>${fitTag(v.fit)} ${size(v.total_bytes)} to bring${v.coarse ? ' · very compressed: answers are noticeably worse' : ''}${v.fit.fits === false ? ' · it will not answer here; only on a computer with more memory' : ' · ' + esc(v.fit.why)}</small></span></label>`).join('')}</div>
+      ${f.draft ? `<label class="mp-opt"><input type="checkbox" id="mpDraft"${f.wantDraft ? ' checked' : ''}> Also bring its speed-up file (${size(f.draft.bytes)}; used where this computer’s llama.cpp supports it)</label>` : ''}
       <div class="row"><button class="btn" id="mpBring"${f.pick ? '' : ' disabled'}>Bring it into this library</button><span class="small muted">${free}</span></div></div>`;
     el.querySelectorAll('input[name=mpv]').forEach(i => i.onchange = () => { f.pick = i.value; el.querySelector('#mpBring').disabled = false });
     el.querySelector('#mpBring').onclick = async () => {

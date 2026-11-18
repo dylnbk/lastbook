@@ -1685,7 +1685,7 @@ AI_SEEN = {}                    # repositories looked at in this run: {name: wha
 
 def ai_presets():
     """The three models offered by name, as the page shows them. Whether each fits is found when the person looks at one."""
-    return [{k: p[k] for k in ('id', 'repo', 'quant', 'title', 'about')} for p in hf_import.PRESETS]
+    return [{k: p[k] for k in ('id', 'repo', 'quant', 'title', 'about', 'draft')} for p in hf_import.PRESETS]
 
 
 def map_credit(lat, lon):
@@ -1919,9 +1919,12 @@ class Handler(library.Handler):
             return self.send_json(dict(assistant.picker_view(), available=True, presets=ai_presets(), bringing=AI_JOBS.status(), **more))
         if rpath == '/api/ai/select':
             try:
-                picker.select(str(body.get('id') or ''))
+                picker.select(str(body.get('id') or ''), port=body.get('port'))
             except KeyError:
                 return self.send_json({'error': 'That model is not here any more. Look again.'}, 404)
+            except ValueError:
+                return self.send_json({'error': 'A port is a number from 1024 to 65535.'}, 400)
+            assistant._status['at'] = 0     # ask the model server again now, not in fifteen seconds
             return view()
         if rpath == '/api/ai/stop':     # give the model's memory back now
             picker.runner.stop('asked')
@@ -1946,7 +1949,7 @@ class Handler(library.Handler):
             def chosen(folder):         # a model the person has just brought is the one they want answering
                 picker.models(refresh=True)
                 new = next((m for m in picker.models() if m['where'] == 'drive' and Path(m['path']).parent == folder and m['file'] == version), None)
-                if new is not None:
+                if new is not None and new['fit'].get('fits') is not False:     # one brought for a larger computer is not chosen on this one
                     picker.select(new['id'])
             try:
                 return self.send_json(AI_JOBS.start(found, version, on_done=chosen))

@@ -107,13 +107,28 @@ def model_open(req, timeout):
 _status = {'at': 0, 'online': False, 'error': None}
 
 
+def _server():
+    """(address, model name or None) of the model server on this computer: the port the person gave in the model picker
+    (Ollama listens on 11434, LM Studio on 1234), else BASE and MODEL. Only ever this computer: the address is built here
+    from a port number, and model_open refuses anything that is not loopback."""
+    c = PICKER.choice() if PICKER else {}
+    if c.get('id') == 'server' and isinstance(c.get('port'), int) and 1024 <= c['port'] <= 65535:
+        return f'http://127.0.0.1:{c["port"]}', c.get('model') or None
+    return BASE, MODEL
+
+
 def _server_online():
-    """Is the model server at BASE there, with the model wanted? Asked at most every 15 seconds."""
-    if time.time() - _status['at'] > 15:
+    """Is the model server there, with the model wanted? Asked at most every 15 seconds. With a port of the person's own
+    and no model named, the first model the server lists is the one used."""
+    base, want = _server()
+    if time.time() - _status['at'] > 15 or _status.get('base') != base:
+        _status.update(base=base, model=want)
         try:
-            with model_open(MODELS_URL, timeout=2.5) as r:
-                ids = [m['id'] for m in json.load(r).get('data', [])]
-            _status.update(online=MODEL in ids, error=None if MODEL in ids else f'{MODEL} not listed')
+            with model_open(base + '/v1/models', timeout=2.5) as r:
+                ids = [m['id'] for m in json.load(r).get('data', []) if isinstance(m, dict) and isinstance(m.get('id'), str)]
+            name = want if want else (ids[0] if ids else None)
+            ok = name is not None and name in ids
+            _status.update(online=ok, model=name, error=None if ok else f'{want} not listed' if want else 'no model listed')
         except Exception as e:
             _status.update(online=False, error=type(e).__name__)
         _status['at'] = time.time()
@@ -128,7 +143,10 @@ def picker_view(refresh=False):
         PICKER.models(refresh=True)
     kind, m = backend()
     active = m['id'] if kind == 'picked' else {'local': 'stock', 'server': 'server', 'off': 'none'}.get(kind)
-    return PICKER.describe(active, LOCAL.status() if LOCAL else None, {'model': MODEL, 'online': _server_online()})
+    base, _ = _server()
+    online = _server_online()
+    return PICKER.describe(active, LOCAL.status() if LOCAL else None,
+                           {'model': _status.get('model') or MODEL, 'online': online, 'port': int(base.rsplit(':', 1)[1]), 'chosen_port': PICKER.choice().get('port')})
 
 
 def model_status():
@@ -146,7 +164,7 @@ def model_status():
     if kind == 'off':
         return {'model': None, 'online': False, 'error': 'off', 'off': True, 'local': local, 'vision': False, 'index': index}
     _server_online()
-    return {'model': MODEL, 'online': _status['online'], 'error': _status['error'], 'local': local, 'vision': True, 'index': index}
+    return {'model': _status.get('model') or MODEL, 'online': _status['online'], 'error': _status['error'], 'local': local, 'vision': True, 'index': index}
 
 
 # --------------------------------------------------------------- retrieval --
@@ -540,7 +558,9 @@ def _http_round(msgs, tools, cancelled, wrote, set_state, runner=None):
             print('AI: the model did not take the question:', type(e).__name__, str(e)[:300], flush=True)
             return f'The AI model is not responding ({type(e).__name__}).'
     else:
-        req = urllib.request.Request(MODEL_URL, json.dumps(body).encode(), {'Content-Type': 'application/json'})
+        base, _ = _server()
+        body['model'] = _status.get('model') if _status.get('base') == base and _status.get('model') else MODEL
+        req = urllib.request.Request(base + '/v1/chat/completions', json.dumps(body).encode(), {'Content-Type': 'application/json'})
         try:
             resp = model_open(req, timeout=180)
         except Exception as e:
