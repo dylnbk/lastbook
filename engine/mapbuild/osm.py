@@ -21,6 +21,11 @@ DETAIL_KEYS = ('highway', 'railway', 'waterway', 'natural', 'landuse', 'leisure'
 AREA_KEYS = ('natural', 'landuse', 'leisure', 'amenity', 'waterway', 'boundary', 'building', 'shop', 'tourism', 'man_made', 'healthcare')
 BATCH = 40000
 PROTECTED = {'national_park', 'protected_area'}
+# How close together (degrees) two points of a shape may be before one is dropped. A detailed region keeps a road as it
+# was drawn. An overview is looked at from far out and has a continent to carry: 0.0004 degrees is about 40 m, a pixel
+# at zoom 11. Measured on Bulgaria, woods alone were 39 MB of a 74 MB overview before this.
+TOLERANCE = {'detail': {'road': 0, 'rail': 0, 'waterway': 0, 'water': 0.00001, 'land': 0.00001, 'park': 0.00002},
+             'overview': {'road': 0.00004, 'rail': 0.00006, 'waterway': 0.0002, 'water': 0.0003, 'land': 0.0004, 'park': 0.0005, 'woods': 0.001}}
 
 
 def _wkb_parts(b, o=0):
@@ -123,6 +128,21 @@ def build(pbf, out, level='detail', buildings=True, node_index=None, progress=No
     def label_of(tags):
         return tags.get('name') or tags.get('name:en') or None
 
+    tol = TOLERANCE[level]
+
+    def line(way, within):
+        """A way's points; in an overview, without those too close together to tell apart at the zooms it is drawn for."""
+        part = _wkb_parts(bytes.fromhex(wkb.create_linestring(way)))[0][0]
+        return [S.simplify(part, within) if within else part]
+
+    def area(layer, cls, label, z, parts, within):
+        """Adds a polygon, its rings made simpler; a ring left with no area is dropped. Returns 1 if anything was added."""
+        rings = [r for r in (S.simplify(p, within) for p in parts) if len(r) >= 8]
+        if not rings:
+            return 0
+        add(layer, cls, label, z, rings)
+        return 1
+
     files = [str(p) for p in (pbf if isinstance(pbf, (list, tuple)) else [pbf])]
     stamps = []
 
@@ -180,20 +200,20 @@ def build(pbf, out, level='detail', buildings=True, node_index=None, progress=No
                     z = S.ROAD_Z.get(hw)
                     if z is None or tags.get('area') == 'yes' or not (detail or hw in S.OVERVIEW_ROADS):
                         continue
-                    add('road', hw, tags.get('name') or tags.get('ref') or None, z, _wkb_parts(bytes.fromhex(wkb.create_linestring(o)))[0])
+                    add('road', hw, tags.get('name') or tags.get('ref') or None, z, line(o, tol['road']))
                     n['road'] += 1
                     continue
                 rw = tags.get('railway')
                 if rw is not None:
                     z = S.RAIL_Z.get(rw)
                     if z is not None and tags.get('service') not in ('yard', 'siding', 'spur', 'crossover') and (detail or rw == 'rail'):
-                        add('rail', rw, tags.get('name') or None, z, _wkb_parts(bytes.fromhex(wkb.create_linestring(o)))[0])
+                        add('rail', rw, tags.get('name') or None, z, line(o, tol['rail']))
                     continue
                 ww = tags.get('waterway')
                 if ww is not None:
                     z = S.WATERWAY_Z.get(ww)
                     if z is not None and (detail or ww != 'stream'):
-                        add('waterway', ww, tags.get('name') or None, z, _wkb_parts(bytes.fromhex(wkb.create_linestring(o)))[0])
+                        add('waterway', ww, tags.get('name') or None, z, line(o, tol['waterway']))
             elif o.is_area():
                 building = tags.get('building')
                 cls = S.poi_class(tags)
@@ -214,28 +234,32 @@ def build(pbf, out, level='detail', buildings=True, node_index=None, progress=No
                 if want_bldg:
                     add('bldg', '', None, 15, [S.simplify(parts[0], 0.000002)])
                     n['bldg'] += 1
-                tol = 0.00001 if detail else 0.00005
                 if water:
                     z = S.area_z(*b, 7)
                     if detail or z <= 11:
-                        add('water', water, tags.get('name') or None, z, [S.simplify(p, tol) for p in parts])
-                        n['area'] += 1
+                        n['area'] += area('water', water, tags.get('name') or None, z, parts, tol['water'])
                 elif natural == 'wetland':
                     z = S.area_z(*b, 7)
                     if detail or z <= 10:
-                        add('wet', 'wetland', tags.get('name') or None, z, [S.simplify(p, tol) for p in parts])
+                        area('wet', 'wetland', tags.get('name') or None, z, parts, tol['land'])
                 elif natural == 'beach':
                     if detail:
                         add('beach', 'beach', tags.get('name') or None, S.area_z(*b, 10), list(parts))
                 elif land and (detail or land in S.OVERVIEW_LAND):
                     z = S.area_z(*b, 9)
-                    if detail or z <= 10:
-                        add('land', land, tags.get('name') or None, z, [S.simplify(p, tol) for p in parts])
-                        n['area'] += 1
+                    if detail:
+                        n['area'] += area('land', land, tags.get('name') or None, z, parts, tol['land'])
+                    elif land == 'green':
+                        # An overview shows the great woods, for finding one's way: those some kilometres across, drawn broadly.
+                        # Not every copse, meadow and patch of scrub.
+                        if z <= 9 and (tags.get('landuse') == 'forest' or natural == 'wood'):
+                            n['area'] += area('land', land, None, z, parts, tol['woods'])
+                    elif z <= 10:
+                        n['area'] += area('land', land, tags.get('name') or None, z, parts, tol['land'])
                 elif protected:
                     z = S.area_z(*b, 8)
                     if detail or z <= 10:
-                        add('land', 'park', None, z, [S.simplify(p, 0.00002 if detail else 0.0001) for p in parts])
+                        area('land', 'park', None, z, parts, tol['park'])
         except (osmium.InvalidLocationError, RuntimeError, ValueError, struct.error):
             # a way with a node the extract does not hold (it crosses the extract's edge), a ring that will not close
             n['bad'] += 1

@@ -9,6 +9,8 @@
   python tools/build_world_region.py --remove france
   python tools/build_world_region.py --write-catalog                    refresh content/regions/catalog.json from Geofabrik
 
+  --skip-built       leave alone a region already built at this level
+  --only-fetched     build only regions whose extract is already in the sources folder (nothing large is downloaded)
   --data FOLDER      the LastbookData folder to build into (default: the one this copy uses)
   --sources FOLDER   where downloads are kept between builds (default: .lastbook/map-sources beside the library)
   --rate N           download no faster than N megabytes a second
@@ -37,6 +39,7 @@ def main():
     ap.add_argument('--countries-of')
     ap.add_argument('--but', default='')
     ap.add_argument('--skip-built', action='store_true')
+    ap.add_argument('--only-fetched', action='store_true')
     ap.add_argument('--list', nargs='?', const='', default=None)
     ap.add_argument('--remove', action='store_true')
     ap.add_argument('--write-catalog', action='store_true')
@@ -99,6 +102,9 @@ def main():
         was = b.built(w)
         if a.skip_built and was and was.get('level') == level:
             say(f'[{i}/{len(wanted)}] {w}: already built')
+            continue
+        if a.only_fetched and not all(b.src.have(f'geofabrik/{p.folder}.osm.pbf') for p in cat.parts(w)):
+            say(f'[{i}/{len(wanted)}] {w}: its extract is not here yet')
             continue
         say(f'[{i}/{len(wanted)}]')
         try:

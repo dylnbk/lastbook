@@ -183,6 +183,48 @@ def linux_ai_runtime():
     return 'cpu'
 
 
+def available_ram():
+    """Memory that can be had now without pushing other programs out: free, plus what the system holds only as a cache.
+    None if it cannot be told. For deciding whether to start something large this moment, not whether it could ever fit."""
+    try:
+        name = os_name()
+        if name == 'linux':
+            with open('/proc/meminfo', encoding='ascii', errors='replace') as f:
+                for line in f:
+                    if line.startswith('MemAvailable:'):
+                        return int(line.split()[1]) * 1024
+            return None
+        if name == 'windows':
+            st = _MemoryStatus()
+            st.dwLength = ctypes.sizeof(st)
+            return st.ullAvailPhys if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)) else None
+        if name == 'macos':
+            # What vm_stat prints, asked of the kernel directly (host_statistics64, HOST_VM_INFO64): free, inactive (not used lately),
+            # speculative (read ahead) and purgeable pages can all be given up at once. The kernel's free_count already holds the
+            # speculative ones (vm_stat takes them out again to print "Pages free").
+            libc = ctypes.CDLL('/usr/lib/libc.dylib', use_errno=True)
+            libc.mach_host_self.restype = ctypes.c_uint
+            stats = _VmStatistics64()
+            count = ctypes.c_uint(ctypes.sizeof(stats) // 4)
+            if libc.host_statistics64(libc.mach_host_self(), 4, ctypes.byref(stats), ctypes.byref(count)) != 0:
+                return None
+            page = _sysctl('hw.pagesize') or 16384
+            return (stats.free_count + stats.inactive_count + stats.purgeable_count) * page or None
+    except Exception:
+        return None
+    return None
+
+
+class _VmStatistics64(ctypes.Structure):
+    """struct vm_statistics64 (<mach/vm_statistics.h>)."""
+    _fields_ = ([(n, ctypes.c_uint) for n in ('free_count', 'active_count', 'inactive_count', 'wire_count')]
+                + [(n, ctypes.c_uint64) for n in ('zero_fill_count', 'reactivations', 'pageins', 'pageouts', 'faults', 'cow_faults', 'lookups', 'hits', 'purges')]
+                + [(n, ctypes.c_uint) for n in ('purgeable_count', 'speculative_count')]
+                + [(n, ctypes.c_uint64) for n in ('decompressions', 'compressions', 'swapins', 'swapouts')]
+                + [(n, ctypes.c_uint) for n in ('compressor_page_count', 'throttled_count', 'external_page_count', 'internal_page_count')]
+                + [('total_uncompressed_pages_in_compressor', ctypes.c_uint64)])
+
+
 # ------------------------------------------------------------------------------------------------------------- disks --
 def disk_of(path):
     """(free, total) on the disk that holds path, or the nearest folder above it that exists."""

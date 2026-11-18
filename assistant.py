@@ -4,7 +4,7 @@ Used by server.py (/api/retrieve, /api/chat, /api/assistant/status). The model i
 MODEL_URL; clients never see it. Tools can read the public survival library (catalog ids, pages, transcripts, map
 gazetteer) and nothing else: no file paths, URLs or shell input are accepted from the model.
 """
-import base64, json, re, socket, sqlite3, threading, time, urllib.error, urllib.request
+import base64, functools, http.client, json, re, socket, sqlite3, threading, time, urllib.error, urllib.request
 import retrieval
 from engine.paths import ro_uri
 
@@ -35,19 +35,56 @@ INDEX = None    # retrieval.Index
 # The optional local AI (llm_local.py): on in the desktop app, off in the server version unless LASTBOOK_LOCAL_AI=1.
 # When it is installed and fits, it answers; otherwise a model server on this computer at BASE, if one runs.
 LOCAL = None
+# Any other model the person chooses (engine/ai): a GGUF file in the library's models/ folder or one another program on this
+# computer holds, run by llama-server. Off with LASTBOOK_AI_PICKER=0.
+PICKER = None
 
 
 def init(server_module, index):
-    global S, INDEX, LOCAL
+    global S, INDEX, LOCAL, PICKER
     S, INDEX = server_module, index
     if os.environ.get('LASTBOOK_LOCAL_AI') == '1':
         import llm_local
         LOCAL = llm_local.LOCAL
         LOCAL.start_background()
+    if os.environ.get('LASTBOOK_AI_PICKER') != '0':
+        from engine.ai import picker
+        PICKER = picker.Picker()
 
 
 def local_on():
     return LOCAL is not None and LOCAL.available()
+
+
+def backend():
+    """Which model answers a question now: (kind, model).
+      'picked'  a model from engine/ai, run by llama-server (model: its description)
+      'local'   the model Lastbook was made with, through lastbook-llm
+      'server'  a model server on this computer at BASE
+      'off'     the person chose no AI
+      'none'    nothing that can answer is here
+    The person's own choice wins when it can run. Otherwise: a model that travels with the library, then the stock model,
+    then a model server. A model another program on this computer holds is used only when the person has chosen it."""
+    choice = PICKER.choice()['id'] if PICKER else 'auto'
+    if choice == 'none':
+        return 'off', None
+    if PICKER and choice not in ('auto', 'stock', 'server'):
+        m = PICKER.chosen()
+        if m is not None:
+            return 'picked', m
+    if choice == 'stock' and local_on():
+        return 'local', None
+    if choice == 'server' and _server_online():
+        return 'server', None
+    if PICKER:
+        m = PICKER.by_itself('drive')
+        if m is not None:
+            return 'picked', m
+    if local_on():
+        return 'local', None
+    if _server_online():
+        return 'server', None
+    return 'none', None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -70,11 +107,8 @@ def model_open(req, timeout):
 _status = {'at': 0, 'online': False, 'error': None}
 
 
-def model_status():
-    local = LOCAL.status() if LOCAL else None
-    if local_on():
-        return {'model': local['name'], 'online': True, 'error': None, 'local': local, 'vision': False,
-                'index': dict(INDEX.status) if INDEX else {'state': 'off'}}
+def _server_online():
+    """Is the model server at BASE there, with the model wanted? Asked at most every 15 seconds."""
     if time.time() - _status['at'] > 15:
         try:
             with model_open(MODELS_URL, timeout=2.5) as r:
@@ -83,8 +117,36 @@ def model_status():
         except Exception as e:
             _status.update(online=False, error=type(e).__name__)
         _status['at'] = time.time()
-    return {'model': MODEL, 'online': _status['online'], 'error': _status['error'], 'local': local, 'vision': True,
-            'index': dict(INDEX.status) if INDEX else {'state': 'off'}}
+    return _status['online']
+
+
+def picker_view(refresh=False):
+    """What the model picker shows (this computer only): every model here, which is chosen, which answers now. None with no picker."""
+    if PICKER is None:
+        return None
+    if refresh:
+        PICKER.models(refresh=True)
+    kind, m = backend()
+    active = m['id'] if kind == 'picked' else {'local': 'stock', 'server': 'server', 'off': 'none'}.get(kind)
+    return PICKER.describe(active, LOCAL.status() if LOCAL else None, {'model': MODEL, 'online': _server_online()})
+
+
+def model_status():
+    local = LOCAL.status() if LOCAL else None
+    index = dict(INDEX.status) if INDEX else {'state': 'off'}
+    kind, m = backend()
+    if kind == 'picked':
+        run = PICKER.runner.status()
+        mine = run['model'] == m['id']
+        return {'model': m['name'], 'online': True, 'error': None, 'local': local, 'vision': m['vision'], 'index': index,
+                'picked': {'id': m['id'], 'name': m['name'], 'where': m['where'], 'origin': m['origin'], 'vision': m['vision'],
+                           'state': run['state'] if mine else 'stopped', 'message': run['message'] if mine else '', 'load_s': run['load_s'] if mine else None}}
+    if kind == 'local':
+        return {'model': local['name'], 'online': True, 'error': None, 'local': local, 'vision': False, 'index': index}
+    if kind == 'off':
+        return {'model': None, 'online': False, 'error': 'off', 'off': True, 'local': local, 'vision': False, 'index': index}
+    _server_online()
+    return {'model': MODEL, 'online': _status['online'], 'error': _status['error'], 'local': local, 'vision': True, 'index': index}
 
 
 # --------------------------------------------------------------- retrieval --
@@ -205,7 +267,7 @@ TOOLS = [
         'Get timestamped transcript lines from a library video, optionally around a topic, to cite a moment in it.',
         'parameters': {'type': 'object', 'properties': {'video_id': {'type': 'string'}, 'query': {'type': 'string'}}, 'required': ['video_id']}}},
     {'type': 'function', 'function': {'name': 'lookup_place', 'description':
-        'Find a place (town, ZIP code, named place) in the offline gazetteer, and optionally the nearest help points (hospital, clinic, pharmacy, fire_station, police, drinking_water, toilet, shelter, community_centre, supermarket) from the offline Southern California map.',
+        'Find a place (town, street, postcode or ZIP code, named place) in the offline gazetteer, and optionally the nearest help points (hospital, clinic, pharmacy, fire_station, police, ambulance_station, defibrillator, drinking_water, water_well, shelter, community_centre, supermarket, fuel) from the offline map.',
         'parameters': {'type': 'object', 'properties': {'query': {'type': 'string'},
             'nearby': {'type': 'string', 'description': 'Comma-separated kinds of help point to list near the place'}}, 'required': ['query']}}},
 ]
@@ -317,7 +379,7 @@ def run_tool(name, args, sess, extra_msgs):
         kinds = [c.strip() for c in str(args.get('nearby') or '').split(',') if c.strip() in S.HELP]
         if kinds and pl[0]['onMap']:
             for h in S.near(pl[0]['lat'], pl[0]['lon'], kinds, 3):
-                k = sess.add({'kind': 'place', 'title': h['name'] or h['label'], 'publisher': 'OpenStreetMap (data as of 25 Oct 2026)', 'lat': h['lat'], 'lon': h['lon'],
+                k = sess.add({'kind': 'place', 'title': h['name'] or h['label'], 'publisher': S.map_credit(h['lat'], h['lon']), 'lat': h['lat'], 'lon': h['lon'],
                               'excerpt': f"{h['label']} · {h['km']} km {h['dir']} of {pl[0]['name']} (straight line)"})
                 lines.append(f"[{k}] {h['label']}: {h['name'] or '(no name recorded)'} — {h['km']} km {h['dir']} (straight-line)")
         return 'Offline map data (may be outdated; does not show closures or damage):\n' + '\n'.join(lines), {'query': q, 'count': len(pl)}
@@ -395,16 +457,94 @@ SYSTEM_TEXT_ONLY = SYSTEM.replace(', view_page when a diagram or table matters',
 ROUND_TOKENS = 1800
 
 
-def _http_round(msgs, tools, cancelled, wrote, set_state):
-    """One model turn from the model server at BASE. (content, {index: call}), 'stopped', or a sentence saying what failed."""
+THINK = re.compile(r'<think>.*?(</think>|$)', re.S)
+
+
+class _Shown:
+    """What the person sees of a model's words as they come: not the thinking some models write between <think> marks
+    (a model server that knows the model takes those out itself; this is for one that does not)."""
+
+    def __init__(self, wrote, set_state):
+        self.wrote, self.set_state = wrote, set_state
+        self.all, self.sent = '', 0
+
+    def add(self, piece):
+        self.all += piece
+        if self.all.count('<think>') > self.all.count('</think>'):
+            self.set_state('thinking')
+            return
+        seen = THINK.sub('', self.all).lstrip()
+        cut = seen.rfind('<')
+        if cut >= 0 and '<think>'.startswith(seen[cut:]):       # the start of a mark may be all that has arrived of it
+            seen = seen[:cut]
+        if len(seen) > self.sent:
+            self.wrote(seen[self.sent:])
+            self.sent = len(seen)
+
+    def text(self):
+        return THINK.sub('', self.all).strip()
+
+
+def _fit_messages(msgs, tools, ctx):
+    """Messages short enough for a model whose context is ctx tokens, leaving room for the answer: the oldest questions and
+    answers go first, then the longest tool results are halved. Counted roughly and on the high side, as llm_local.size_of does."""
+    room = ctx - ROUND_TOKENS - 200
+
+    def size(work):
+        n = len(json.dumps(tools)) / 3.2 if tools else 0
+        for m in work:
+            c = m.get('content')
+            if isinstance(c, str):
+                n += len(c) / 3.2
+            elif isinstance(c, list):
+                n += sum(len(p.get('text', '')) / 3.2 if p.get('type') == 'text' else 1100 for p in c if isinstance(p, dict))    # a page image is about a thousand tokens
+            n += 12 + sum(len(json.dumps(t)) / 3.2 for t in m.get('tool_calls') or [])
+        return n
+    work = [dict(m) for m in msgs]
+    while size(work) > room:
+        last_user = max((i for i, m in enumerate(work) if m['role'] == 'user' and isinstance(m.get('content'), str)), default=-1)
+        old = [i for i, m in enumerate(work) if m['role'] in ('user', 'assistant') and i < last_user and not m.get('tool_calls')]
+        if old:
+            del work[old[0]]
+            continue
+        long = max((i for i, m in enumerate(work) if m['role'] in ('tool', 'system') and i > 0 and isinstance(m.get('content'), str) and len(m['content']) > 1500),
+                   key=lambda i: len(work[i]['content']), default=None)
+        if long is None:
+            return None
+        work[long]['content'] = work[long]['content'][:len(work[long]['content']) // 2] + '\n[…shortened to fit]'
+    return work
+
+
+def _http_round(msgs, tools, cancelled, wrote, set_state, runner=None):
+    """One model turn from the model server at BASE, or from the chosen model's own server (runner).
+    (content, {index: call}), 'stopped', or a sentence saying what failed."""
     body = {'model': MODEL, 'messages': msgs, 'stream': True, 'temperature': 0.2, 'max_tokens': ROUND_TOKENS, 'reasoning_effort': REASONING_EFFORT}
     if tools:
         body['tools'] = tools
-    req = urllib.request.Request(MODEL_URL, json.dumps(body).encode(), {'Content-Type': 'application/json'})
-    try:
-        resp = model_open(req, timeout=180)
-    except Exception as e:
-        return f'The local model is not responding ({type(e).__name__}).'
+    shown = None
+    if runner is not None:
+        fitted = _fit_messages(msgs, tools, runner.context or 8192)
+        if fitted is None:
+            return 'The question and its sources were too long for this AI model. Start a new chat or ask a shorter question.'
+        # The model is whichever one the runner holds. Thinking is turned off where the model's template has a switch for it: someone
+        # in trouble should not wait through a page of reasoning, and the answer is checked against its sources either way.
+        body = {'messages': fitted, 'stream': True, 'temperature': 0.2, 'max_tokens': ROUND_TOKENS, 'chat_template_kwargs': {'enable_thinking': False}}
+        if tools:
+            body['tools'] = tools
+        shown = _Shown(wrote, set_state)
+        try:
+            runner.busy.acquire()
+            resp = runner.stream(body, timeout=180)
+        except Exception as e:
+            runner.busy.release()
+            print('AI: the model did not take the question:', type(e).__name__, str(e)[:300], flush=True)
+            return f'The AI model is not responding ({type(e).__name__}).'
+    else:
+        req = urllib.request.Request(MODEL_URL, json.dumps(body).encode(), {'Content-Type': 'application/json'})
+        try:
+            resp = model_open(req, timeout=180)
+        except Exception as e:
+            return f'The local model is not responding ({type(e).__name__}).'
     calls, content = {}, ''
     try:
         for raw in resp:
@@ -425,18 +565,23 @@ def _http_round(msgs, tools, cancelled, wrote, set_state):
                 set_state('thinking')
             if dl.get('content'):
                 content += dl['content']
-                wrote(dl['content'])
+                (shown.add if shown else wrote)(dl['content'])
             for tc in dl.get('tool_calls') or []:
                 c = calls.setdefault(tc.get('index', 0), {'id': '', 'name': '', 'args': ''})
                 c['id'] = tc.get('id') or c['id']
                 f = tc.get('function') or {}
                 c['name'] += f.get('name') or ''
                 c['args'] += f.get('arguments') or ''
-    except (socket.timeout, urllib.error.URLError, ConnectionError) as e:
+    except (socket.timeout, urllib.error.URLError, ConnectionError, http.client.HTTPException) as e:
         return f'The local model stopped responding ({type(e).__name__}).'
     finally:
         resp.close()
-    return content, calls
+        if runner is not None:
+            conn = getattr(resp, '_lastbook_connection', None)
+            if conn is not None:
+                conn.close()        # also what stops the model writing when the person pressed Stop
+            runner.busy.release()
+    return (shown.text() if shown else content), calls
 
 
 def _local_round(msgs, tools, cancelled, wrote, set_state):
@@ -522,10 +667,14 @@ def chat(messages, about, emit, cancelled):
         if s != state[0]:
             state[0] = s
             emit({'type': 'state', 'state': s})
-    local = local_on()
-    tools = [t for t in TOOLS if t['function']['name'] != 'view_page'] if local else TOOLS   # the local model reads text only
-    if local:
+    kind, picked = backend()
+    local = kind == 'local'
+    sees = kind == 'server' or (kind == 'picked' and picked['vision'])      # can it look at a page's image
+    tools = TOOLS if sees else [t for t in TOOLS if t['function']['name'] != 'view_page']
+    if not sees:
         msgs[0] = {'role': 'system', 'content': SYSTEM_TEXT_ONLY}
+    one_round = _local_round if local else _http_round
+    if local or kind == 'picked':
         set_state('starting')
         shown = [None]
 
@@ -533,7 +682,11 @@ def chat(messages, about, emit, cancelled):
             if pct != shown[0]:
                 shown[0] = pct
                 emit({'type': 'state', 'state': 'starting', 'pct': pct})
-        why = LOCAL.ensure_running(loading, cancelled)
+        if local:
+            why = LOCAL.ensure_running(loading, cancelled)
+        else:
+            why = PICKER.runner.ensure(picked, loading, cancelled)
+            one_round = functools.partial(_http_round, runner=PICKER.runner)
         if why == 'stopped':
             emit({'type': 'stopped'})
             return
@@ -551,7 +704,7 @@ def chat(messages, about, emit, cancelled):
         if last:
             msgs.append({'role': 'system', 'content': 'Stop searching now. Write the answer using only the sources already retrieved, with their keys. If they are not enough, say what is missing under "Not found in the library:".'})
         set_state('thinking' if rnd == 0 else 'reading')
-        got = (_local_round if local else _http_round)(msgs, None if last else tools, cancelled, wrote, set_state)
+        got = one_round(msgs, None if last else tools, cancelled, wrote, set_state)
         if got in ('stopped', None):
             emit({'type': 'stopped'} if got else {'type': 'error', 'error': 'model_unavailable', 'text': 'The local model stopped responding.'})
             return

@@ -64,6 +64,7 @@ const Chat = (() => {
         <div class="chat-top">
           <button class="btn plain chat-histbtn" id="openSide" aria-label="Show chats">${ico("clock")}<span>Chats</span></button>
           <div class="chat-status" id="chatStatus" aria-live="polite"></div>
+          <button class="btn plain chat-modelbtn" id="modelBtn" hidden aria-haspopup="dialog" title="Choose which AI model answers">Model</button>
           <a class="btn plain" href="#/ask" id="newChat" aria-label="New chat">${ico('ask')}<span>New</span></a>
         </div>
         ${q.get('from') && !cur ? `<div style="margin:2px 0 8px">${backButton(q.get('from'))}</div>` : ''}
@@ -94,9 +95,11 @@ const Chat = (() => {
       if (!e.target.checked) { try { LBStorage.removeItem('sg.chats') } catch { } toast('Chats will be forgotten when you close this page') } else { persist(); toast('Chats will be kept ' + LBStorage.words().at) }
     };
     $('#clearChats').onclick = () => { if (!confirm('Delete all chats ' + LBStorage.words().at + '?')) return; Object.values(live).forEach(l => l.abort && l.abort()); chats = []; try { LBStorage.removeItem('sg.chats') } catch { } location.hash = '#/ask' };
-    leaving = () => { document.removeEventListener('keydown', escStop) };
+    leaving = () => { document.removeEventListener('keydown', escStop); if (typeof Models !== 'undefined') Models.close() };
     document.addEventListener('keydown', escStop);
     statusLine();
+    // The model picker, on the computer the library is open on (a phone it is shared with asks questions; it does not choose what answers)
+    if (typeof Models !== 'undefined') Models.available().then(yes => { const b = $('#modelBtn'); if (b && yes) { b.hidden = false; b.onclick = () => Models.open(statusLine) } pickerHere = !!yes; if (status) setupCard(status) });
     const initial = q.get('q');
     if (initial && !cur) { history.replaceState(null, '', '#/ask'); send(initial) }
     else if (matchMedia('(hover:hover)').matches) setTimeout(() => ta.focus({ preventScroll: true }), 60);
@@ -122,12 +125,17 @@ const Chat = (() => {
       error: [false, l.message || 'The local AI could not start.'],
     })[l.state] || [false, l.message || 'Local AI unavailable'];
   }
-  let polling = null;
+  let polling = null, pickerHere = false;
   async function statusLine() {
     const s = await getStatus(), el = $('#chatStatus'); if (!el) return;
-    const ix = s.index || {}, l = s.local;
+    const ix = s.index || {}, l = s.local, p = s.picked;
     const still = ix.state === 'indexing' || ix.state === 'indexing (other process)' ? ` · <span class="muted">still indexing (${(ix.chunks || 0).toLocaleString()} passages so far)</span>` : '';
-    if (l && (/ready|stopped|loading/.test(l.state) || !s.online)) {
+    if (p) {    // a model the person chose, or one that travels with the library (engine/ai)
+      const line = p.state === 'ready' ? 'ready' : p.state === 'loading' ? 'starting…' : 'it starts when you ask';
+      el.innerHTML = `<span class="dotok"></span><span><b class="chat-modelname">${esc(p.name)}</b><span class="long"> · ${line}</span>${still}</span>`;
+    } else if (s.off) {
+      el.innerHTML = `<span class="dotoff"></span><span>AI is off<span class="long"> — Chat shows the matching pages</span></span>`;
+    } else if (l && (/ready|stopped|loading/.test(l.state) || !s.online)) {
       const [ok, line] = localLine(l);
       el.innerHTML = `<span class="${ok ? 'dotok' : 'dotoff'}"></span><span>${esc(line)}${ok ? still : '<span class="long"> — search and reading still work</span>'}</span>`;
     } else {
@@ -137,11 +145,20 @@ const Chat = (() => {
     const sb = $('#sendBtn'); if (sb) sb.title = s.online ? 'Send' : 'The assistant is offline; you will get matching pages instead';
     setupCard(s);
     clearTimeout(polling);
-    if (l && /checking|measuring|loading/.test(l.state) && $('#chatStatus')) polling = setTimeout(statusLine, 1000);
+    if (((l && /checking|measuring|loading/.test(l.state)) || (p && p.state === 'loading')) && $('#chatStatus')) polling = setTimeout(statusLine, 1000);
   }
   // How to add the local AI, on a new chat when it is missing, wrong or off. The file comes from the website, outside the app.
   function setupCard(s) {
     const box = $('#aiSetup'), l = s.local; if (!box) return;
+    if (pickerHere && !s.online && !(cur && cur.messages.length)) {   // nothing answers yet, and a model can be chosen here
+      box.hidden = false;
+      box.innerHTML = s.off
+        ? `<p>AI is turned off: Chat shows the matching pages and writes nothing.</p><div class="row"><button class="btn" id="aiPick">Choose a model</button></div>`
+        : `<p><b>Choose an AI model to get written answers.</b> Use one already on this computer, or bring one into this library. It runs on this computer only.</p>
+           <div class="row"><button class="btn" id="aiPick">Choose a model</button></div>`;
+      $('#aiPick').onclick = () => Models.open(statusLine);
+      return;
+    }
     const show = !!l && !s.online && /absent|wrong|off|error/.test(l.state) && !(cur && cur.messages.length);
     box.hidden = !show;
     if (!show) return;

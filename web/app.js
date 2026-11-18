@@ -1108,6 +1108,12 @@ function blind(c) {
 }
 // The optional local AI in the desktop app: what it is, where it runs, and its controls. '' in the server version.
 function localAbout(st) {
+  const pick = typeof Models !== 'undefined' ? ` <button class="btn plain" onclick="Models.open(() => { if (location.hash.startsWith('#/about')) route() })">Choose the AI model</button>` : '';
+  if (st.picked) {    // a model the person chose, or one that travels with the library (engine/ai)
+    const p = st.picked, line = { ready: 'running now', loading: 'starting' }[p.state] || 'ready; it starts when you ask and lets go of its memory after 15 minutes unused';
+    return `AI model: ${esc(p.name)}, ${line}. ${p.where === 'drive' ? 'It is kept in this library.' : `It is used where ${esc(p.origin)} keeps it on this computer.`} It reads ${p.vision ? 'text and page images' : 'text only'}.<span class="row">${pick}</span>`;
+  }
+  if (st.off) return `AI is turned off. Chat shows the matching pages.<span class="row">${pick}</span>`;
   const l = st.local; if (!l) return '';
   const gb = n => (n / 1e9).toFixed(1) + ' GB';
   const where = (l.placement || []).filter(p => p.bytes > 2e8).map(p => `${gb(p.bytes)} on ${esc(p.device)}`).join(', ');

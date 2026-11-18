@@ -208,6 +208,26 @@ def fetch_small(url, limit=1 << 20, allowed=None, context=None, timeout=10):
         return None
 
 
+def get_small(url, limit=4 << 20, allowed=None, context=None, timeout=15):
+    """(status, body) of one small GET: a publisher's own list of its files. A status other than 200 comes back for the caller
+    to put into words (404: no such thing; 401 and 403: not open to everyone). Raises Failed when the server cannot be
+    reached, the address is not an allowed one, or the answer is larger than `limit`."""
+    try:
+        conn, r, _ = _open(url, 0, None, allowed, context or tls_context(), timeout)
+        try:
+            data = r.read(limit + 1)
+            if len(data) > limit:
+                raise Failed('network', 'The download server sent far more than was asked for.')
+            return r.status, data
+        finally:
+            conn.close()
+    except ssl.SSLCertVerificationError:
+        raise Failed('network', 'Lastbook could not confirm it is talking to the download server, so it stopped. '
+                                'A network that intercepts secure connections (some offices, hotels) can cause this.')
+    except (OSError, http.client.HTTPException, ValueError) as e:
+        raise Failed('network', f'The download server could not be reached ({type(e).__name__}). Check the internet connection, then try again.')
+
+
 def _load_meta(path):
     try:
         with open(path, encoding='utf-8') as f:

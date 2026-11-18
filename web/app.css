@@ -918,3 +918,50 @@ body.map-maxed{overflow:hidden}
 .share-qr svg{width:100%;height:auto;display:block}
 .share-on>div:last-child{flex:1 1 280px;min-width:0}
 .share-link code{display:inline-block;padding:8px 10px;border-radius:var(--r-ctl);background:var(--sunk);font-size:14.5px;overflow-wrap:anywhere;user-select:all;-webkit-user-select:all}
+
+/* ---- the model picker (web/models.js): which AI model answers, and bringing one from Hugging Face ---- */
+.chat-modelname{font-weight:600;color:var(--ink)}
+.chat-top .chat-modelbtn{flex:none}
+.mp-back{position:fixed;inset:0;z-index:60;background:rgba(0,0,0,.42);display:grid;place-items:center;padding:16px}
+.mp{background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:16px;width:min(680px,100%);max-height:min(88vh,860px);display:flex;flex-direction:column;box-shadow:0 18px 50px rgba(0,0,0,.3);outline:0}
+.mp-head{display:flex;align-items:center;justify-content:space-between;padding:12px 12px 8px 20px;border-bottom:1px solid var(--line2)}
+.mp-head h2{margin:0;font-size:19px}
+.mp-body{padding:14px 20px 18px;overflow-y:auto;overscroll-behavior:contain}
+.mp-lead{margin:0 0 12px;color:var(--ink2);font-size:15px}
+.mp-set{border:1px solid var(--line2);border-radius:12px;padding:6px 12px 10px;margin:0 0 14px;min-width:0}
+.mp-set legend{font-weight:650;font-size:14.5px;padding:0 6px;color:var(--ink2)}
+.mp-h{margin:10px 2px 2px;font-size:13.5px;font-weight:600;color:var(--ink3)}
+.mp-row{display:flex;gap:10px;align-items:flex-start;padding:9px 4px;border-top:1px solid var(--line2);cursor:pointer}
+.mp-set>.mp-row:first-of-type,.mp-h+.mp-row,.mp-versions>.mp-row:first-child{border-top:0}
+.mp-row input{margin:4px 0 0;flex:none;width:18px;height:18px;accent-color:var(--accent)}
+.mp-row.off{cursor:default}.mp-row.off .mp-what b{color:var(--ink3)}
+.mp-what{flex:1;min-width:0}.mp-what b{display:block;font-size:15.5px;overflow-wrap:anywhere}
+.mp-what small{display:block;color:var(--ink3);font-size:13.5px;line-height:1.45;margin-top:2px}
+.mp-now{font-style:normal;font-weight:600;font-size:12px;color:var(--accent);background:var(--accent-soft);border-radius:999px;padding:1px 8px;margin-left:6px;white-space:nowrap}
+.mp-tag{display:inline-block;font-size:12px;font-weight:600;border-radius:999px;padding:0 8px;margin-right:4px;background:var(--sunk);color:var(--ink2);white-space:nowrap}
+.mp-tag.ok{background:var(--accent-soft);color:var(--accent)}.mp-tag.tight{background:#fff1d6;color:#8a5a00}.mp-tag.no{background:#fde4e1;color:#a3261a}
+@media (prefers-color-scheme:dark){.mp-tag.tight{background:#4a3a12;color:#ffd98a}.mp-tag.no{background:#4d1f1a;color:#ffb3a8}}
+.mp-x{all:unset;flex:none;cursor:pointer;font-size:13.5px;color:var(--ink3);padding:4px 8px;border-radius:8px}.mp-x:hover{color:#a3261a;background:var(--sunk)}
+.mp-x.keep{color:var(--accent);max-width:9em;text-align:right}.mp-x.keep:hover{color:var(--accent)}
+.mp-x:focus-visible{outline:3px solid var(--focus)}
+.mp-warn{margin:8px 0;padding:10px 12px;border-radius:10px;background:#fff1d6;color:#5c3d00;font-size:14.5px}
+@media (prefers-color-scheme:dark){.mp-warn{background:#4a3a12;color:#ffe2a6}}
+.mp-ok{margin:8px 0;padding:10px 12px;border-radius:10px;background:var(--accent-soft);color:var(--ink);font-size:14.5px}
+.mp-run{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:14px;color:var(--ink2);margin:0 0 14px}
+.mp .btn.small{min-height:34px;padding:4px 12px;font-size:14px}
+.mp-presets{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px;margin-bottom:10px}
+.mp-preset{all:unset;box-sizing:border-box;cursor:pointer;border:1px solid var(--line);border-radius:12px;padding:10px 12px;background:var(--paper)}
+.mp-preset:hover{border-color:var(--accent)}.mp-preset:focus-visible{outline:3px solid var(--focus)}
+.mp-preset b{display:block;font-size:15px}.mp-preset small{display:block;color:var(--ink3);font-size:13px;line-height:1.4;margin-top:3px}
+.mp-form{display:flex;gap:8px}.mp-form input{flex:1;min-width:0;min-height:40px;border:1px solid var(--line);border-radius:10px;padding:6px 12px;background:var(--bg);color:var(--ink);font:inherit;font-size:15px}
+.mp-form .btn{min-height:40px;padding:6px 16px;font-size:15px}
+.mp-found{margin-top:12px;padding:12px;border:1px solid var(--line2);border-radius:12px;background:var(--paper)}
+.mp-found>b{display:block;font-size:16px}.mp-found>small{display:block;color:var(--ink3);font-size:13.5px;margin:2px 0 8px;overflow-wrap:anywhere}
+.mp-versions{max-height:260px;overflow-y:auto;border:1px solid var(--line2);border-radius:10px;padding:0 8px;background:var(--bg)}
+.mp-opt{display:flex;gap:8px;align-items:flex-start;font-size:14px;color:var(--ink2);margin:10px 0 0}
+.mp-found .row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+.mp-job{margin-top:12px;padding:12px;border:1px solid var(--line2);border-radius:12px;background:var(--paper);display:flex;flex-wrap:wrap;gap:6px 12px;align-items:center}
+.mp-job b{flex-basis:100%}.mp-job small{flex:1;color:var(--ink3);font-size:13.5px;overflow-wrap:anywhere}
+.mp-job .wk-bar{order:3;height:6px}
+.linkish{all:unset;cursor:pointer;color:var(--accent);text-decoration:underline}.linkish:focus-visible{outline:3px solid var(--focus)}
+@media (max-width:560px){.mp-back{padding:0;place-items:end stretch}.mp{border-radius:16px 16px 0 0;max-height:92vh;width:100%}.chat-top .chat-modelbtn{padding:6px 10px}}
