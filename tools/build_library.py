@@ -10,6 +10,7 @@
                         "maps": [{"id": "great-britain", "level": "detail"}, {"id": "france", "level": "overview"}], "portable": true}
   --encoder software|hardware    how videos are made smaller (default software: half the size and a far better picture; hardware: three times as fast)
   --threads N        processor threads the video encoder may use (default 6)
+  --jobs N           videos made smaller at once, sharing those threads (default 1; 2 gets through more on a computer with cores to spare)
   --rate N           download no faster than N megabytes a second
   --sources FOLDER   where map downloads are kept between builds
   --again MINUTES    when the pack folder is itself still being filled: run, wait, and run again until nothing is missing
@@ -37,6 +38,7 @@ def main():
     ap.add_argument('--menu', action='store_true')
     ap.add_argument('--encoder', choices=('software', 'hardware'))
     ap.add_argument('--threads', type=int)
+    ap.add_argument('--jobs', type=int)
     ap.add_argument('--rate', type=float)
     ap.add_argument('--sources')
     ap.add_argument('--again', type=float)
@@ -79,6 +81,8 @@ def main():
         choice['encoder'] = a.encoder
     if a.threads:
         choice['threads'] = a.threads
+    if a.jobs:
+        choice['video_jobs'] = a.jobs
     control = download.Control()
     signal.signal(signal.SIGINT, lambda *x: control.stop('cancelled'))
     signal.signal(signal.SIGTERM, lambda *x: control.stop('cancelled'))

@@ -499,6 +499,72 @@ class Smaller(Temp):
             again = build.Build(self.data, build.LocalSource(self.tmp / 'pack'), self.choice).run()
         self.assertEqual(again['videos_done'], 2)
 
+    def test_two_videos_at_once_make_the_same_library(self):
+        seen, lock = [], __import__('threading').Lock()
+        real = video.encode
+
+        def watched(src, dest, profile, **k):
+            with lock:
+                seen.append(('in', k.get('threads')))
+            try:
+                return real(src, dest, profile, **k)
+            finally:
+                with lock:
+                    seen.append(('out', None))
+        with mock.patch.object(video, 'encode', watched):
+            status = build.Build(self.data, build.LocalSource(self.tmp / 'pack'), dict(self.choice, video_jobs=2, threads=6)).run()
+        self.assertEqual((status['phase'], status['problems'], status['videos_done'], status['videos_total']), ('done', [], 2, 2))
+        self.assertEqual([s[0] for s in seen[:2]], ['in', 'in'])                           # the second began before the first ended
+        self.assertEqual({s[1] for s in seen if s[0] == 'in'}, {3})                         # each on its share of the threads
+        cat = self.catalog()
+        for rid, profile in (('video-bandage', 'howto'), ('video-campfire', 'talk')):
+            f = self.lib / cat[rid]['path']
+            self.assertEqual((cat[rid]['bytes'], cat[rid]['sha256'], cat[rid]['made_smaller']), (f.stat().st_size, buildkit.sha(f.read_bytes()), profile))
+            self.assertEqual(video.probe(f)['video'], 'hevc')
+        lines = [json.loads(l) for l in (self.data / 'derived' / 'wizard' / 'videos.jsonl').read_text().splitlines()]
+        self.assertEqual(sorted(l['id'] for l in lines), ['video-bandage', 'video-campfire'])      # one whole line each, whichever finished first
+        self.assertEqual([p.name for p in self.lib.rglob('*.part')], [])
+
+    def test_one_job_failing_stops_the_others_and_leaves_nothing_half_written(self):
+        real = video.encode
+        started = __import__('threading').Event()
+
+        def first_breaks(src, dest, profile, **k):
+            if 'bandage' in str(dest):
+                started.wait(20)                # until the other is under way
+                raise OSError(28, 'No space left on device')
+            started.set()
+            for _ in range(200):                # a long video: it is still being made when the other fails
+                k['control'].check()
+                time.sleep(0.05)
+            return real(src, dest, profile, **k)
+        with mock.patch.object(video, 'encode', first_breaks):
+            with self.assertRaises(OSError):
+                build.Build(self.data, build.LocalSource(self.tmp / 'pack'), dict(self.choice, video_jobs=2)).run()
+        self.assertEqual([p.name for p in self.lib.rglob('*.part')], [])
+        self.assertFalse((self.data / 'derived' / 'wizard' / 'videos.jsonl').exists())      # neither was done
+        status = build.Build(self.data, build.LocalSource(self.tmp / 'pack'), dict(self.choice, video_jobs=2)).run()
+        self.assertEqual((status['phase'], status['videos_done']), ('done', 2))             # and a later run does both
+
+    def test_paused_with_two_at_once(self):
+        c = download.Control()
+        real = video.encode
+        n = [0]
+
+        def stop_at_the_second(src, dest, profile, **k):
+            n[0] += 1
+            if n[0] == 2:
+                c.stop('paused')
+            k['control'].check()
+            return real(src, dest, profile, **k)
+        with mock.patch.object(video, 'encode', stop_at_the_second):
+            with self.assertRaises(download.Stopped) as e:
+                build.Build(self.data, build.LocalSource(self.tmp / 'pack'), dict(self.choice, video_jobs=2), control=c).run()
+        self.assertEqual(e.exception.why, 'paused')
+        self.assertEqual([p.name for p in self.lib.rglob('*.part')], [])
+        status = build.Build(self.data, build.LocalSource(self.tmp / 'pack'), dict(self.choice, video_jobs=2)).run()
+        self.assertEqual((status['phase'], status['videos_done']), ('done', 2))
+
     def test_the_library_opens_before_its_videos_are_done(self):
         """Stopped in the middle of the videos: the catalog is there, the one not done is shown by its words, and a later run finishes."""
         c = download.Control()

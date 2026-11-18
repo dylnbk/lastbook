@@ -10,7 +10,7 @@ source   where the pack's files come from:
 choice   {'documents': [...], 'encyclopedias': [...], 'videos': {...}      as engine/wizard/contents.py
           'maps': [{'id': 'great-britain', 'level': 'detail', 'terrain': True}, ...],
           'ai': {'mode': 'none'} | {'mode': 'computer', 'id': ..., 'copy': True} | {'mode': 'download', 'repo': ..., 'version': ...},
-          'encoder': 'software' or 'hardware', 'threads': 6, 'portable': True}
+          'encoder': 'software' or 'hardware', 'threads': 6, 'video_jobs': 1, 'portable': True}
 
 What it does, in this order, each step picking up where a run that stopped left off:
   1. maps      each region not already built (engine/mapbuild); what they were made from is then deleted
@@ -29,6 +29,7 @@ set on download.THROTTLE.
 import hashlib
 import json
 import os
+import queue
 import shutil
 import threading
 import time
@@ -103,7 +104,9 @@ class RemoteSource:
     """A published pack, read in place over the network. Only what is asked for is downloaded."""
     remote = True
 
-    def __init__(self, url, workers=8, allowed=None, context=None):
+    # Four connections. With ten, the download server gave 13 MB a second for three hours and then answered most requests
+    # 503, the ten together getting 0.4 MB a second; started again with two, it gave 6.5 at once (18 Nov 2026).
+    def __init__(self, url, workers=4, allowed=None, context=None):
         self.url, self.workers, self.allowed, self.context = url, workers, allowed, context
         self.pack = None
         self.manifest = {}
@@ -176,6 +179,34 @@ class RemoteSource:
         return path
 
 
+class _Either:
+    """The build's own control, and a second reason to stop: a video being made beside this one has failed."""
+
+    def __init__(self, control, abort):
+        self.control, self.abort, self.ev = control, abort, control.ev
+
+    @property
+    def why(self):
+        return self.control.why
+
+    def stop(self, why):
+        self.control.stop(why)
+
+    def check(self):
+        self.control.check()
+        if self.abort.is_set():
+            raise download.Stopped('paused')
+
+    def sleep(self, s):
+        end = time.time() + s
+        while True:
+            self.check()
+            left = end - time.time()
+            if left <= 0:
+                return
+            time.sleep(min(0.5, left))
+
+
 class Build:
     """One build. status() can be read from another thread at any time; control.stop('paused') or ('cancelled') ends it cleanly."""
 
@@ -190,6 +221,7 @@ class Build:
         self.work = self.target / STATE
         self.scratch = self.target.parent / '.lastbook' / 'build' if self.choice.get('portable') else self.target / '.build'
         self.lock = threading.Lock()
+        self.notes = threading.Lock()
         self.state = {'phase': 'starting', 'done_bytes': 0, 'total_bytes': 0, 'videos_done': 0, 'videos_total': 0, 'message': '', 'problems': []}
         self.done_videos = {}        # record id -> {'bytes', 'sha256'} or {'kept': True}
 
@@ -225,10 +257,11 @@ class Build:
             pass
 
     def _note_video(self, rid, result):
-        self.done_videos[rid] = dict(result, id=rid)
-        self.work.mkdir(parents=True, exist_ok=True)
-        with open(self.work / 'videos.jsonl', 'a', encoding='utf-8') as f:
-            f.write(json.dumps(self.done_videos[rid]) + '\n')
+        with self.notes:        # one line at a time, whichever job it is from
+            self.done_videos[rid] = dict(result, id=rid)
+            self.work.mkdir(parents=True, exist_ok=True)
+            with open(self.work / 'videos.jsonl', 'a', encoding='utf-8') as f:
+                f.write(json.dumps(self.done_videos[rid]) + '\n')
 
     # --------------------------------------------------------------------------------------------------- run ----
     def run(self):
@@ -432,55 +465,100 @@ class Build:
         if video.tools() is None:
             raise Refused('No ffmpeg that can write HEVC is on this computer, so videos cannot be made smaller. Choose "original" or "words only" for videos, or install ffmpeg.')
         encoder, threads = self.choice.get('encoder') or 'software', int(self.choice.get('threads') or video.THREADS)
-        rewritten = refilled = time.time()
-        for r, profile in sorted(todo, key=lambda x: x[0].get('bytes') or 0):       # the small ones first: the library fills in fastest
-            self.control.check()
-            if self._video_done(r):
-                continue
-            src, temporary = self.source.original(LIB + r['path'], self.scratch, self.control)
-            if src is None:
-                self._problem(f'{r["path"]} could not be had from the pack.')
-                continue
-            dest = self.lib / r['path']
-            self._set(message=f'Making videos smaller: {done + 1} of {len(todo)} ({r.get("title", "")[:60]})')
+        # Several videos at once, each on its share of the threads: at 480p the encoder cannot keep many threads busy on
+        # one picture, so on a computer with cores to spare two videos side by side get through more than one alone.
+        jobs = max(1, min(4, int(self.choice.get('video_jobs') or 1)))
+        each = max(1, threads // jobs)
+        waiting = [(r, profile) for r, profile in sorted(todo, key=lambda x: x[0].get('bytes') or 0)      # the small ones first: the library fills in fastest
+                   if not self._video_done(r)]
+        abort = threading.Event()
+        control = self.control if jobs == 1 else _Either(self.control, abort)
+        slots = queue.SimpleQueue()
+        for i in range(jobs):
+            slots.put(i)
+        count = [done]
+        times = {'rewritten': time.time(), 'refilled': time.time()}
+
+        def one(r, profile):
+            control.check()
+            slot = slots.get()
             try:
-                got = video.encode(src, dest, profile, encoder=encoder, threads=threads, control=self.control)
-                if got['kept']:
-                    if Path(src) != dest:
-                        library.copy_file(src, dest, self.control)
-                    self._note_video(r['id'], {'kept': True})
-                else:
-                    self._note_video(r['id'], {'bytes': got['bytes'], 'sha256': library.sha256_of(dest), 'seconds': got['seconds'], 'kbps': got['kbps']})
-            except video.Failed as e:
-                self._problem(f'{r["path"]}: {e} The original is kept.')
+                # Each job keeps the original it is reading in a place of its own
+                src, temporary = self.source.original(LIB + r['path'], self.scratch if jobs == 1 else self.scratch / f'job-{slot}', control)
+                if src is None:
+                    self._problem(f'{r["path"]} could not be had from the pack.')
+                    return
+                dest = self.lib / r['path']
+                with self.lock:
+                    self.state['message'] = f'Making videos smaller: {count[0] + 1} of {len(todo)} ({r.get("title", "")[:60]})'
                 try:
-                    if Path(src) != dest:
-                        library.copy_file(src, dest, self.control)
-                    self._note_video(r['id'], {'kept': True})
-                except OSError as e2:
-                    self._problem(f'{r["path"]} could not be copied either ({type(e2).__name__}).')
+                    got = video.encode(src, dest, profile, encoder=encoder, threads=each, control=control)
+                    if got['kept']:
+                        if Path(src) != dest:
+                            library.copy_file(src, dest, control)
+                        self._note_video(r['id'], {'kept': True})
+                    else:
+                        self._note_video(r['id'], {'bytes': got['bytes'], 'sha256': library.sha256_of(dest), 'seconds': got['seconds'], 'kbps': got['kbps']})
+                except video.Failed as e:
+                    self._problem(f'{r["path"]}: {e} The original is kept.')
+                    try:
+                        if Path(src) != dest:
+                            library.copy_file(src, dest, control)
+                        self._note_video(r['id'], {'kept': True})
+                    except OSError as e2:
+                        self._problem(f'{r["path"]} could not be copied either ({type(e2).__name__}).')
+                finally:
+                    if temporary:
+                        for p in (Path(src), Path(src).with_name('._' + Path(src).name)):
+                            try:
+                                p.unlink()
+                            except OSError:
+                                pass
             finally:
-                if temporary:
-                    for p in (Path(src), Path(src).with_name('._' + Path(src).name)):
-                        try:
-                            p.unlink()
-                        except OSError:
-                            pass
-            done += 1
+                slots.put(slot)
             with self.lock:
-                self.state['videos_done'] = done
-            if time.time() - rewritten > REWRITE_EVERY:
-                if self.missing and time.time() - refilled > REFILL_EVERY:
-                    # A pack folder that is itself still being filled: what was not there when this began may be there now
-                    with self.lock:
-                        self.state['problems'] = [p for p in self.state['problems'] if 'could not be had' not in p and 'more files' not in p]
-                    self._files(plan)
-                    self._set(phase='videos')
-                    refilled = time.time()
-                library.write_catalog(self.lib, self._records(pack, plan))
-                library.write_summary(self.lib, self._records(pack, plan))
-                self._save_state()
-                rewritten = time.time()
+                count[0] += 1
+                self.state['videos_done'] = count[0]
+
+        def keep_up():
+            """Every few minutes the catalog is written again, so the library that is open fills in as videos are done."""
+            if time.time() - times['rewritten'] <= REWRITE_EVERY:
+                return
+            if self.missing and time.time() - times['refilled'] > REFILL_EVERY:
+                # A pack folder that is itself still being filled: what was not there when this began may be there now
+                with self.lock:
+                    self.state['problems'] = [p for p in self.state['problems'] if 'could not be had' not in p and 'more files' not in p]
+                self._files(plan)
+                self._set(phase='videos')
+                times['refilled'] = time.time()
+            library.write_catalog(self.lib, self._records(pack, plan))
+            library.write_summary(self.lib, self._records(pack, plan))
+            self._save_state()
+            times['rewritten'] = time.time()
+
+        if jobs == 1:
+            for r, profile in waiting:
+                one(r, profile)
+                keep_up()
+            return
+        from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+        with ThreadPoolExecutor(max_workers=jobs, thread_name_prefix='video') as pool:
+            running, rest = set(), iter(waiting)
+            try:
+                while True:
+                    while len(running) < jobs:
+                        nxt = next(rest, None)
+                        if nxt is None:
+                            break
+                        running.add(pool.submit(one, *nxt))
+                    if not running:
+                        break
+                    finished, running = wait(running, timeout=5, return_when=FIRST_COMPLETED)
+                    for f in finished:
+                        f.result()          # whatever stopped that job stops the build
+                    keep_up()
+            finally:
+                abort.set()                 # the jobs still running stop at their next look, and leave nothing half-written
 
     def _video_done(self, r):
         d = self.done_videos.get(r['id'])

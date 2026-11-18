@@ -160,8 +160,10 @@ A choice is read, not trusted: only the keys a build understands reach the worke
   is on the same page.
 - **Windows and Linux are untested** for the page, the drive listing and the worker: the code for them was written
   from their documentation.
-- The download server answered `503` to about a third of requests while one computer held ten connections to it.
-  The downloader waits and tries again (six times, up to 30 s apart); the page offers "Try again" when it gives up.
+- **The download server does not like many connections for long.** Pulling the All library with ten, it gave 13 MB
+  a second for three hours, then answered most requests `503` and the ten together got 0.4 MB a second. Started
+  again with two, it gave 6.5 at once. A build from a published library now uses four. The downloader waits and
+  tries again when it is told 503 (six times, up to 30 s apart); the page offers "Try again" when it gives up.
 
 ## Where it is
 
