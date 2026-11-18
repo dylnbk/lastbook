@@ -10,9 +10,9 @@
 # Run by hand (Actions, "Portable drive", Run workflow), on a push to the fork's branch, and on a tag v*.
 # Nothing here is signed with a certificate: the Mac app is ad hoc signed, the Windows app is unsigned.
 #
-# This file was written on a Mac and has not yet been run. Until its first run is green, what it says of Windows and
-# Linux is what is intended, not what is known: see docs/PORTABLE-DRIVE.md. (The Mac build and the Android build have
-# been done by hand on that Mac, with the same commands.)
+# What has run so far (docs/PORTABLE-DRIVE.md keeps the account): tests, portable and android on Windows and Linux,
+# green. The macOS jobs wait for a runner that is often not to be had: the tests have run there once, the Mac app and
+# kit never (the Mac build has been done by hand on a Mac, with the same commands).
 name: Portable drive
 
 on:

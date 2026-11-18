@@ -178,11 +178,23 @@ def main():
         counts = pack.get('counts') or {}
         what += f'  A library of {counts.get("documents", "?")} documents, {counts.get("encyclopedias", "?")} encyclopedias and {counts.get("videos", "?")} videos'
         what += f', made from Lastbook {str((pack.get("made_from") or {}).get("name") or pack.get("name") or "").capitalize()}.\n'
-        if counts.get('videos_pending'):
-            what += (f'  When this note was written, {counts["videos_pending"]} of the videos were still being made smaller by the computer building\n'
+        # Counted now, from what is on the drive: pack.json is written when a build begins, and both of these move on after it
+        pending, maps = counts.get('videos_pending') or 0, pack.get('regions') or 0
+        try:
+            catalog = json.loads((data / 'library-data' / 'catalog.json').read_text(encoding='utf-8'))
+            pending = sum(1 for r in catalog if r.get('kind') == 'video' and r.get('pending'))
+        except (OSError, ValueError):
+            pass
+        try:
+            from engine.wizard.library import regions_here
+            maps = len(regions_here(data))
+        except Exception:
+            maps = len(maps) if isinstance(maps, list) else maps
+        if pending:
+            what += (f'  When this note was written, {pending} of the videos were still being made smaller by the computer building\n'
                      '  the library. Until a video is done it is here by its words, and says so.\n')
-        if pack.get('regions'):
-            what += f'  Maps of {len(pack["regions"])} regions of the world, on the outline of every country.\n'
+        if maps:
+            what += f'  Maps of {maps} regions of the world, on the outline of every country.\n'
     except (OSError, ValueError):
         what += '  No library yet. Open Lastbook from this drive and it will offer to build one here.\n'
     phones = ''

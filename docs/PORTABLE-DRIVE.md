@@ -30,15 +30,25 @@ its drive ([engine/portable.py](../engine/portable.py)).
 | | Built | Run |
 |---|---|---|
 | Mac (Apple silicon) | On this Mac, from the source | From a 1 TB exFAT drive, by its launcher, on the Mac it was built on: the app's own window, on a library of 12,851 records |
-| Windows (64-bit) | **Not yet.** The workflow below builds it | **Never** |
-| Linux (x86-64) | **Not yet.** The workflow below builds it | The launcher, with a stand-in for the program, on a Mac. The program itself: **never** |
+| Windows (64-bit) | By the fork's GitHub Actions, on a Windows machine there: 122 MB (51 MB zipped), `llama-server.exe` and the WebView2 files inside | By that workflow only: started on a made-up library, in the browser's way, where it answered. **Never by a person**: not its own window, not from a drive, not its launcher, and no AI model has answered on it |
+| Linux (x86-64) | By the same workflow, on Ubuntu 22.04: 224 MB (83 MB zipped), `llama-server` inside | By that workflow only, the same way. The launcher, with a stand-in for the program, on a Mac. **Never by a person**, and no AI model has answered on it |
 | Android | On this Mac: `Install-Android.apk`, 68 MB ([mobile/android](../mobile/android/README.md)) | On a virtual Android 14 phone, where its engine gave the desktop's answers. **Never on a real phone, nor with a drive plugged in** |
 | iPhone and iPad | See [mobile/ipad](../mobile/ipad/README.md) | |
 
-The Windows and Linux programs are the same Python as the Mac's and the same code, and the part of it they open with
-(the browser's way, below) is tested on the Mac. But a program that has never been started on a system is not known to
-work there. `.github/workflows/build-portable.yml` builds all three and starts each one on a made-up library before
-keeping it: until that workflow has run green on the fork, read "Windows" and "Linux" here as intended.
+`.github/workflows/build-portable.yml` builds each program and starts it on a made-up library before keeping it
+(`build_portable.py --smoke`: the program in the browser's way, asked whether it is up, for its first page and the
+builder's page, and which library it is on and what it can do there). On Windows and Linux that is all that is known
+of them: they start, find a library and answer. Nobody has yet sat in front of either. The fork's unit tests also run
+there, 451 on each. Windows skips 37 of them: 16 start a stand-in for `llama-server` that is a shell script and 10 need
+an `ffmpeg`, so neither starting a model nor making a video smaller is tested on Windows at all. Linux skips 6.
+
+The first runs there found three faults a Mac could not show, all mended: a damaged notes file could not be set aside
+on Windows (it was still open), a build's last word could be lost there (two threads writing one file), and the file
+of node positions a map build keeps was left behind (Windows will not remove an open file; it is emptied instead).
+
+The workflow's macOS jobs wait for a machine GitHub has few of. Its tests have run there once; its Mac app and the
+`kit` that puts the three together have not. The Mac app on a drive made here was built on this Mac by the same
+command.
 
 **Found by running the Mac app from the drive:**
 

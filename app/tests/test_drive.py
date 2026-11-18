@@ -89,9 +89,15 @@ class Made(Base):
     def test_an_app_is_replaced_whole_and_the_library_left_alone(self):
         lib = self.drive / 'LastbookData'
         (lib / 'library-data').mkdir(parents=True)
-        (lib / 'library-data' / 'catalog.json').write_text('[]')
-        (lib / 'pack.json').write_text(json.dumps({'name': 'custom', 'made_from': {'name': 'all'}, 'counts': {'documents': 8283, 'encyclopedias': 4, 'videos': 2324},
-                                                   'regions': ['great-britain', 'france']}))
+        catalog = json.dumps([{'id': 'video-a', 'kind': 'video', 'pending': True}, {'id': 'video-b', 'kind': 'video'}, {'id': 'doc-c', 'kind': 'document'}])
+        (lib / 'library-data' / 'catalog.json').write_text(catalog)
+        # As a build leaves it part of the way through: written when the build began, when nine videos waited and one map was there
+        (lib / 'pack.json').write_text(json.dumps({'name': 'custom', 'made_from': {'name': 'all'}, 'regions': ['great-britain'],
+                                                   'counts': {'documents': 8283, 'encyclopedias': 4, 'videos': 2324, 'videos_pending': 9}}))
+        for region in ('great-britain', 'france'):
+            (lib / 'derived' / 'geo' / 'regions' / region).mkdir(parents=True)
+            (lib / 'derived' / 'geo' / 'regions' / region / 'region.json').write_text(json.dumps({'id': region}))
+            (lib / 'derived' / 'geo' / 'regions' / region / 'map.sqlite').write_bytes(b'')
         (lib / 'user').mkdir()
         (lib / 'user' / 'notes.txt').write_text('mine')
         old = self.drive / 'bin' / 'macos-arm64' / 'Lastbook.app' / 'old-file'
@@ -101,11 +107,12 @@ class Made(Base):
         self.make('--from', str(self.bundle('macos-arm64', 'Lastbook.app/Contents/MacOS/Lastbook')))
         self.assertFalse(old.exists())                                                  # nothing of the old app is mixed into the new
         self.assertEqual((lib / 'user' / 'notes.txt').read_text(), 'mine')
-        self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), '[]')
+        self.assertEqual((lib / 'library-data' / 'catalog.json').read_text(), catalog)
         self.assertEqual((self.drive / 'holiday.jpg').read_bytes(), b'not ours')        # nor is anything else on the drive touched
         note = (self.drive / 'READ-ME-FIRST.txt').read_text()
         self.assertIn('8283 documents, 4 encyclopedias and 2324 videos, made from Lastbook All', note)
-        self.assertIn('Maps of 2 regions', note)
+        self.assertIn('Maps of 2 regions', note)                                        # what is on the drive now, not what the build wrote down as it began
+        self.assertIn('1 of the videos were still being made smaller', note)
 
     def test_what_is_refused(self):
         with self.assertRaises(SystemExit):                                             # not a drive at all
