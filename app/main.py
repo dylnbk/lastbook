@@ -31,10 +31,25 @@ DATA_NAME = 'LastbookData'
 CATALOG = os.path.join('library-data', 'catalog.json')
 ASK_TITLE = 'Find your Lastbook library'
 ASK = 'Lastbook needs its library folder, called LastbookData. Unzip the library you downloaded, then choose that folder.'
+TRAVELLING = None   # the library that travels (engine/portable.py), once main() has found one: nothing is then kept on this computer
+
+
+def go_portable(data):
+    """From here on the program's own files go on the library's drive, and the rest of the program is told so."""
+    global TRAVELLING
+    TRAVELLING = Path(data)
+    os.environ['LASTBOOK_PORTABLE'] = '1'
+    from engine import portable
+    os.environ['LASTBOOK_PORTABLE_STATE'] = str(portable.state_dir(TRAVELLING))   # the shells keep what they must write there, not on this computer
 
 
 def app_folders():
-    """(settings, this computer's app data): roaming and local on Windows, one place on a Mac, XDG's config and data folders on Linux."""
+    """(settings, this computer's app data): roaming and local on Windows, one place on a Mac, XDG's config and data folders on Linux.
+    For a library that travels, one folder beside it on its own drive."""
+    if TRAVELLING is not None:
+        from engine import portable
+        state = portable.state_dir(TRAVELLING)
+        return state, state
     if sys.platform.startswith('linux'):
         home = Path.home()
         return (Path(os.environ.get('XDG_CONFIG_HOME') or home / '.config') / 'Lastbook',
@@ -54,6 +69,8 @@ def remembered():
 
 
 def remember(folder):
+    if TRAVELLING is not None:      # it is found by where it sits, on whatever computer and under whatever drive name
+        return
     settings = app_folders()[0] / 'settings.json'
     try:
         settings.parent.mkdir(parents=True, exist_ok=True)
@@ -63,7 +80,10 @@ def remember(folder):
 
 
 def places():
-    """The remembered selection and app-owned data only."""
+    """The remembered selection and app-owned data only. A library that travels looks at neither: they are this computer's."""
+    if TRAVELLING is not None:
+        yield TRAVELLING
+        return
     yield remembered()
     yield app_folders()[1] / DATA_NAME
 
@@ -147,7 +167,9 @@ def default_choice():
     """(folder, why or None). The app's own data folder until the person chooses another. On Windows the library's longest file
     must fit in an ordinary path (engine/setup/api.py path_too_deep): when a long user name makes the per-user folder too deep,
     <system drive>:\\Lastbook instead, made and closed to other accounts (install.private_folder). If even that cannot be made,
-    the per-user folder stays and setup asks the person to choose."""
+    the per-user folder stays and setup asks the person to choose. A library that travels goes where its launcher is."""
+    if TRAVELLING is not None:
+        return TRAVELLING.parent, None
     parent = app_folders()[1]
     if sys.platform == 'win32':
         from engine.setup import api as setup_api, install
@@ -221,6 +243,8 @@ def pick_folder(files=False):
 
 def linux_dirs():
     """(data, cache) for WebKit's own storage on Linux: the page's saved settings, and what it can rebuild."""
+    if TRAVELLING is not None:
+        return str(app_folders()[1]), str(app_folders()[1] / 'cache')
     return str(app_folders()[1]), str(Path(os.environ.get('XDG_CACHE_HOME') or Path.home() / '.cache') / 'Lastbook')
 
 
@@ -232,6 +256,10 @@ def relaunch():
     # The engine's current folder and startup flags must not override the
     # library switch staged by setup on the next normal launch.
     os.environ.pop('LASTBOOK_DATA', None)
+    if TRAVELLING is not None:      # the next start cannot find it by its place when it runs from source, so it is told
+        os.environ['LASTBOOK_DATA'] = str(TRAVELLING)
+    os.environ.pop('LASTBOOK_PORTABLE', None)   # worked out again from the library itself
+    os.environ.pop('LASTBOOK_PORTABLE_STATE', None)
     print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} setup finished: starting again', flush=True)
     if sys.platform == 'win32':
         import subprocess
@@ -352,17 +380,28 @@ def main():
     ap = argparse.ArgumentParser(description='Lastbook')
     ap.add_argument('--data', help='data folder holding library-data/ and derived/ (or set LASTBOOK_DATA)')
     ap.add_argument('--ask', action='store_true', help='ask for the library folder in a dialog instead of opening setup')
+    ap.add_argument('--portable', action='store_true', help='the --data folder is a library that travels (a USB drive): keep everything on its drive and nothing on this computer')
     a = ap.parse_args()
+    given = a.data or os.environ.get('LASTBOOK_DATA')    # a folder named outright is opened as it is: only its own staged switch is made
+    # A library that travels: the one named, when it is marked as one or --portable says so, else a marked one beside the program.
+    from engine import portable
+    travelling = Path(given) if given else portable.beside()
+    if travelling is not None and (a.portable or portable.is_portable(travelling)):
+        if not portable.is_portable(travelling):
+            portable.mark(travelling)
+        go_portable(travelling.resolve())
+        given = a.data = str(TRAVELLING)
     if sys.platform.startswith('linux'):
         import shell_linux
         if not shell_linux.claim(str(app_folders()[1])):     # already open: that window comes to the front instead
             return 0
     note = None
-    given = a.data or os.environ.get('LASTBOOK_DATA')    # a folder named outright is opened as it is: only its own staged switch is made
     from engine.setup import api as setup_api
     lib, note = setup_api.startup(app_folders()[0], only=Path(given) if given else None)   # before anything is open
     if lib and not given:
         remember(lib)
+    if TRAVELLING is not None and not (TRAVELLING / CATALOG).is_file():   # a drive made ready with nothing on it yet: setup fills it
+        return run_setup()
     data = data_folder(a.data)
     if data is None:
         if a.ask:

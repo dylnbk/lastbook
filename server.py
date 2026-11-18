@@ -33,7 +33,7 @@ if __name__ == '__main__':  # --data must be known before the paths below are wo
 
 import engine.paths as lastbook_paths  # noqa: E402  (data folder and program folder can differ in the packaged app)
 from engine.paths import ro_uri  # noqa: E402
-from engine import saved_pages, address_search  # noqa: E402
+from engine import saved_pages, address_search, userstore, qr  # noqa: E402
 from engine.setup import api as setup_api  # noqa: E402  (the one module that may download: only when the person asks)
 HERE = lastbook_paths.DATA  # holds derived/
 APP = lastbook_paths.APP  # holds web/ and content/
@@ -50,6 +50,9 @@ remote_records = library.remote_records  # videos moved to remote drives by the 
 INDEX = None  # retrieval.Index, created in main()
 LAN_KEY = None
 SERVER = None  # the running HTTP server, so the packaged app's launcher can stop it
+PORTABLE = lastbook_paths.PORTABLE  # a library that travels: what the person keeps is kept in it, and nothing on the computer
+USERSTORE = userstore.Store(lastbook_paths.USER)  # saved items, chats and the page's settings; opened at the first use
+THIS_COMPUTER = ('127.0.0.1', '::1', '::ffff:127.0.0.1')  # the app's own window (app/bridge.py) or a browser on this computer
 
 _pdf_lock = threading.Lock()  # PDFium is not thread-safe
 
@@ -189,7 +192,7 @@ def clean_title(r):
 # ------------------------------------------------------------------ topics ----
 def topics():
     out = []
-    for f in sorted((APP / 'content' / 'topics').glob('*.json')):
+    for f in sorted(lastbook_paths.visible((APP / 'content' / 'topics').glob('*.json'))):
         try:
             t = json.loads(f.read_text(encoding='utf-8'))
         except ValueError as e:
@@ -202,7 +205,7 @@ def topics():
 def zim_names():
     """The encyclopedia files this library really holds. Its folder decides, so one rule covers every size of pack."""
     try:
-        return sorted(p.name for p in (LIB / 'collections').glob('*.zim'))
+        return sorted(p.name for p in lastbook_paths.visible((LIB / 'collections').glob('*.zim')))
     except OSError:
         return []
 
@@ -1642,7 +1645,115 @@ def pack_datasets(have):
 
 
 # --------------------------------------------------------------- handler ----
+# --------------------------------------------------------- sharing with phones ----
+# Off until the person turns it on. Then the same Handler answers on a port of this computer's network address, and a
+# phone needs the link with the key in it once (lan_ok). The desktop app has no port at all until then, and none after Stop.
+SHARE_PORTS = range(8890, 8900)
+_share = {'server': None, 'port': None}
+_share_lock = threading.Lock()
+
+
+def lan_key():
+    kf = HERE / 'derived' / 'lan-key'
+    if not kf.exists():
+        kf.parent.mkdir(parents=True, exist_ok=True)
+        kf.write_text(secrets.token_urlsafe(18))
+        try:
+            os.chmod(kf, 0o600)
+        except OSError:
+            pass
+    return kf.read_text(encoding='utf-8').strip()
+
+
+def lan_ip():
+    """This computer's address on the network it is on. Nothing is sent: a UDP socket is only pointed at an address, and the
+    system answers with which of its own addresses it would use to get there. None when it is on no network."""
+    import socket
+    for far in ('10.255.255.255', '192.168.255.255', '172.31.255.255', '169.254.255.255'):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect((far, 1))
+            ip = s.getsockname()[0]
+            if ip and not ip.startswith('127.') and ip != '0.0.0.0':
+                return ip
+        except OSError:
+            pass
+        finally:
+            s.close()
+    return None
+
+
+def _server_class():
+    server_class = library.http.server.ThreadingHTTPServer
+    if os.name == 'nt':  # SO_REUSEADDR on Windows lets a second copy silently share the port
+        class server_class(server_class):
+            allow_reuse_address = False
+    return server_class
+
+
+def share_status():
+    srv, port = _share['server'], _share['port']
+    if not srv and SERVER and LAN_KEY:      # the server version, started with --lan
+        port = SERVER.server_address[1]
+    if not (port and LAN_KEY):
+        return {'on': False}
+    ip = lan_ip()
+    link = f'http://{ip}:{port}/?key={LAN_KEY}' if ip else None
+    return {'on': True, 'port': port, 'ip': ip, 'url': link, 'qr': qr.svg(link) if link else None, 'stoppable': bool(srv)}
+
+
+def share_start():
+    global LAN_KEY
+    with _share_lock:
+        if _share['server'] or (SERVER and LAN_KEY):
+            return share_status()
+        key = lan_key()
+        srv = None
+        for port in SHARE_PORTS:
+            try:
+                srv = _server_class()(('0.0.0.0', port), Handler)
+                break
+            except OSError:
+                continue
+        if srv is None:
+            return {'on': False, 'error': 'Lastbook found no free port on this computer to share on.'}
+        srv.daemon_threads = True
+        LAN_KEY = key
+        _share.update(server=srv, port=port)
+        threading.Thread(target=srv.serve_forever, daemon=True, name='share').start()
+        print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} sharing on this network turned on, port {port}', flush=True)
+        return share_status()
+
+
+def share_stop():
+    global LAN_KEY
+    with _share_lock:
+        srv = _share['server']
+        if srv:
+            _share.update(server=None, port=None)
+            LAN_KEY = None                  # the key file stays, so the same link works the next time it is turned on
+            srv.shutdown()
+            srv.server_close()
+            print(f'{time.strftime("%Y-%m-%d %H:%M:%S")} sharing on this network turned off', flush=True)
+        return share_status()
+
+
 class Handler(library.Handler):
+    def here(self):
+        """This computer itself: the app's own window, or a browser on it. Not a phone the library is shared with."""
+        return self.client_address[0] in THIS_COMPUTER
+
+    def json_body(self, limit):
+        """The request's JSON object, or None when it is not one or is longer than limit."""
+        try:
+            n = int(self.headers.get('Content-Length') or 0)
+            if not 0 <= n <= limit:
+                return None
+            d = json.loads(self.rfile.read(n) or b'{}')
+            return d if isinstance(d, dict) else None
+        except ValueError:
+            return None
+
     def send_json(self, obj, status=200, cache=None):
         data = obj if isinstance(obj, bytes) else json.dumps(obj, separators=(',', ':')).encode()
         self.send_response(status)
@@ -1890,6 +2001,26 @@ class Handler(library.Handler):
         if rpath.startswith('/api/update/'):  # Check for updates, when the person asks: engine/update.py, this computer only
             from engine import update
             return update.handle(self, 'POST', rpath)
+        if rpath == '/api/user-store':  # what the person keeps, saved in the library's own folder: this computer only
+            if not self.here():
+                return self.send_json({'error': 'Only on the computer the library is open on.'}, 403)
+            body = self.json_body(300_000)
+            if body is None:
+                return self.send_json({'error': 'bad request'}, 400)
+            try:
+                return self.send_json({'ok': True, 'applied': USERSTORE.apply(body.get('ops'))})
+            except userstore.Refused as e:
+                return self.send_json({'error': str(e)}, 400)
+            except (OSError, sqlite3.Error) as e:
+                print('user store: could not save:', type(e).__name__, e, flush=True)
+                return self.send_json({'error': 'Lastbook could not save to the library folder.'}, 507)
+        if rpath == '/api/share':  # phones on the same network, turned on and off by the person at this computer
+            if not self.here():
+                return self.send_json({'error': 'Only on the computer the library is open on.'}, 403)
+            action = (self.json_body(2000) or {}).get('action')
+            if action not in ('start', 'stop'):
+                return self.send_json({'error': 'action is start or stop'}, 400)
+            return self.send_json(share_start() if action == 'start' else share_stop())
         if rpath.startswith('/api/tool/'):  # the assistant's read-only tools, for other local DeepSeek clients
             name = rpath[10:]
             if name not in {t['function']['name'] for t in assistant.TOOLS}:
@@ -1908,6 +2039,8 @@ class Handler(library.Handler):
             images = [p['image_url']['url'] for m in extra for p in m['content'] if isinstance(p, dict) and p.get('type') == 'image_url']
             return self.send_json({'text': text, 'summary': summary, 'sources': list(sess.sources.values()), 'images': images})
         if rpath == '/api/assistant/local':   # the optional local AI: look again for the file, turn it on or off, stop it
+            if not self.here():   # a phone the library is shared with may ask it questions, not switch it off
+                return self.send_json({'error': 'Only on the computer the library is open on.'}, 403)
             if not assistant.LOCAL:
                 return self.send_json({'error': 'no local AI in this version'}, 404)
             try:
@@ -1990,6 +2123,16 @@ class Handler(library.Handler):
                 return self.send_json({'error': 'not found'}, 404)
             if path == '/sw.js':
                 return self.send_static(WEB / 'sw.js')
+            if path == '/api/user-store':   # read once as the page opens (web/userstore.js). A phone keeps its own, in its own browser.
+                if not self.here():
+                    return self.send_json({'available': False}, cache='no-store')
+                try:
+                    return self.send_json({'available': True, 'portable': PORTABLE, 'data': USERSTORE.all()}, cache='no-store')
+                except (OSError, sqlite3.Error) as e:
+                    print('user store: could not open:', type(e).__name__, e, flush=True)
+                    return self.send_json({'available': False}, cache='no-store')
+            if path == '/api/share':
+                return self.send_json(share_status() if self.here() else {'on': True, 'guest': True}, cache='no-store')
             if path == '/api/topics':
                 return self.send_json(topics_resolved())
             if path == '/api/find':
@@ -2127,23 +2270,11 @@ def serve(port, lan=False):
     """The HTTP server version: binds the port and answers until stopped."""
     global LAN_KEY, SERVER
     if lan:
-        kf = HERE / 'derived' / 'lan-key'
-        if not kf.exists():
-            kf.write_text(secrets.token_urlsafe(18))
-            os.chmod(kf, 0o600)
-        LAN_KEY = kf.read_text(encoding='utf-8').strip()
-    server_class = library.http.server.ThreadingHTTPServer
-    if os.name == 'nt':  # SO_REUSEADDR on Windows lets a second copy silently share the port
-        class server_class(server_class):
-            allow_reuse_address = False
-    srv = SERVER = server_class(('0.0.0.0' if lan else '127.0.0.1', port), Handler)
+        LAN_KEY = lan_key()
+    srv = SERVER = _server_class()(('0.0.0.0' if lan else '127.0.0.1', port), Handler)
     print(f'Lastbook: http://127.0.0.1:{port}/', flush=True)
     if lan:
-        import socket
-        try:
-            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); s.connect(('10.255.255.255', 1)); ip = s.getsockname()[0]; s.close()
-        except OSError:
-            ip = '<this-computer-ip>'
+        ip = lan_ip() or '<this-computer-ip>'
         print(f'Phones on this network: http://{ip}:{port}/?key={LAN_KEY}  (keep this link private; delete derived/lan-key to change it)', flush=True)
     srv.serve_forever()
 

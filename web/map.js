@@ -71,8 +71,8 @@ const MapView = (() => {
     pond: 'Small ponds are often livestock ponds with manure runoff: treat the water and cook any fish thoroughly. Small ponds can be fished out in weeks.', spring: 'Mapped spring — treat the water before drinking.', drinking_water: 'Mapped tap; may be off in an emergency.' };
   let st = null, world = null, geography = null;
 
-  const load = (k, d) => { try { return JSON.parse(localStorage.getItem('sg.' + k)) ?? d } catch { return d } };
-  const save = (k, v) => { try { localStorage.setItem('sg.' + k, JSON.stringify(v)) } catch { } };
+  const load = (k, d) => { try { return JSON.parse(LBStorage.getItem('sg.' + k)) ?? d } catch { return d } };
+  const save = (k, v) => { try { LBStorage.setItem('sg.' + k, JSON.stringify(v)) } catch { } };
   const lon2x = (lon, z) => (lon + 180) / 360 * 2 ** z;
   const lat2y = (lat, z) => { const s = Math.sin(Math.max(-85, Math.min(85, lat)) * Math.PI / 180); return (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * 2 ** z };
   const x2lon = (x, z) => x / 2 ** z * 360 - 180;

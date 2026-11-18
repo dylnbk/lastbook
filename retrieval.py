@@ -153,7 +153,13 @@ class Index:
         self._tls = threading.local()
         self._excl = {'mtime': None, 'ids': set()}
         db = self._db()
-        db.execute('PRAGMA journal_mode=WAL')
+        # A library that travels keeps a rollback journal: one file, with no -wal or -shm beside it to be left behind or copied
+        # without. It is also a one-way door there: on exFAT a database that has been in WAL mode cannot be taken out of it
+        # (SQLite answers "attempt to write a readonly database"; the same statements succeed on APFS), so it never goes in.
+        try:
+            db.execute('PRAGMA journal_mode=' + ('DELETE' if lastbook_paths.PORTABLE else 'WAL'))
+        except sqlite3.OperationalError as e:
+            print(f'semantic index: journal mode left as it was ({e})', flush=True)
         db.executescript('''CREATE TABLE IF NOT EXISTS chunk(id INTEGER PRIMARY KEY, doc_id TEXT, page INTEGER, t REAL, text TEXT, active INTEGER DEFAULT 1);
           CREATE INDEX IF NOT EXISTS chunk_doc ON chunk(doc_id);
           CREATE TABLE IF NOT EXISTS docstate(doc_id TEXT PRIMARY KEY, sig TEXT, nchunks INTEGER, at REAL);

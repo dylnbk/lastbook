@@ -49,9 +49,10 @@ const SHORT = { hurt: 'Injury & illness', water: 'Drinking water', power: 'Power
 const tcStyle = id => `style="--tc:${TC[id] || '#1a6b55'}"`;
 
 /* ------------------------------------------------------------ storage -- */
+// Kept in the library's own folder (web/userstore.js), so it goes where the library goes; a phone it is shared with uses its own browser.
 const store = {
-  get(k, d) { try { return JSON.parse(localStorage.getItem('sg.' + k)) ?? d } catch { return d } },
-  set(k, v) { try { localStorage.setItem('sg.' + k, JSON.stringify(v)) } catch { } },
+  get(k, d) { try { return JSON.parse(LBStorage.getItem('sg.' + k)) ?? d } catch { return d } },
+  set(k, v) { try { LBStorage.setItem('sg.' + k, JSON.stringify(v)) } catch { } },
 };
 // A row as the lists show it: its title and the subtitle under it. Two rows that read the same are one row, whatever their keys.
 const rowSub = x => x.sub && x.sub !== x.title ? x.sub : x.key[0] === 'w' ? 'Encyclopedia' : '';
@@ -66,7 +67,7 @@ function savedCount() { const el = $('#savedN'); if (el) el.textContent = store.
 function toggleSave(item, btn) {
   let s = store.get('saved', []);
   if (s.some(x => x.key === item.key)) { s = s.filter(x => x.key !== item.key); toast('Removed from Saved') }
-  else { s.unshift({ ...item, at: Date.now() }); toast('Saved on this device') }
+  else { s.unshift({ ...item, at: Date.now() }); toast('Saved ' + LBStorage.words().at) }
   store.set('saved', s);
   savedCount();
   if (btn) { btn.setAttribute('aria-pressed', isSaved(item.key)); const sp = $('span', btn); if (sp) sp.textContent = isSaved(item.key) ? 'Saved' : 'Save' }
@@ -374,7 +375,7 @@ addEventListener('resize', () => requestAnimationFrame(bandState));
 $('#tbBack').onclick = () => { const a = pageBack(); if (navAt > 0) history.back(); else if (a) location.hash = a.getAttribute('href') };
 $('#tbFwd').onclick = () => history.forward();
 function toggleSide() {
-  if (wide.matches) { html.classList.toggle('side-off'); try { localStorage.setItem('sg.side-off', html.classList.contains('side-off') ? '1' : '0') } catch { } window.LB_LAYOUT() }
+  if (wide.matches) { html.classList.toggle('side-off'); try { LBStorage.setItem('sg.side-off', html.classList.contains('side-off') ? '1' : '0') } catch { } window.LB_LAYOUT() }
   else html.classList.toggle('side-open');
   railTitles(); bandState();
 }
@@ -1085,7 +1086,7 @@ async function savedPage() {
   const s = store.get('saved', []), r = await recents();
   const li = x => `<li><a class="row" href="${esc(x.href)}"><span class="k">${ico(x.key[0] === 'v' ? 'video' : x.key[0] === 'w' ? 'wiki' : x.key[0] === 't' ? 'book' : x.key[0] === 'a' ? 'ask' : 'page')}</span><span><b>${esc(x.title)}</b><small>${esc(rowSub(x))}</small></span></a></li>`;
   const cont = await resumable();
-  main.innerHTML = `<h1>Saved</h1><p class="lead">Kept on this device only.</p>
+  main.innerHTML = `<h1>Saved</h1><p class="lead">${esc(LBStorage.words().kept)}</p>
   ${s.length ? `<div class="collection" style="margin-top:18px"><ul class="list">${s.map(li).join('')}</ul></div>` : `<div class="empty"><span class="e-ico">${ico('save')}</span><b>Nothing saved yet</b><p>Choose Save on any page, video, article or answer to keep it here.</p></div>`}
   ${cont.length ? secHead('Continue watching') + rail(cont.map(([id, v]) => vcard({ id, title: v.title, thumb: v.thumb, duration: v.d }, { sub: 'Resume at ' + clock(v.t) })).join('')) : ''}
   ${secHead('Recently opened')}${r.length ? `<div class="collection"><ul class="list">${r.map(li).join('')}</ul></div><p><button class="btn plain" id="clr">Clear recent list</button></p>` : '<div class="empty"><p>Pages you open will appear here.</p></div>'}`;
@@ -1149,12 +1150,36 @@ async function about() {
   <h2>What this guide does not do</h2><ul>
    <li>It points to original pages; the guides don’t write their own medical, chemical or electrical instructions. The assistant’s answers mark which sentences come from a cited page and which are its own wording.</li>
    <li>Nothing here replaces trained help. Each guide shows the sources’ own limits.</li>
-   <li>Reading and watching are not the same as practising. Your ticks stay on this device.</li>
+   <li>Reading and watching are not the same as practising. Your ticks stay ${LBStorage.words().at}.</li>
    ${s.pack ? '' : '<li>Shopping lists and carts in older reports are plans, not proof of supplies you own.</li>'}</ul>
   ${s.sources ? `<h2>Sources and credits</h2><p><a href="#/read/${encodeURIComponent(s.sources)}?${fromQ()}">Sources and permissions</a>: every publisher in this library, where it came from, and how to ask for something to be removed.</p>` : ''}
-  ${IN_WINDOW ? '' : '<h2>Using it on a phone</h2><p>Phones on the same Wi-Fi (no internet needed) can use the guide when this computer starts it with <code>server.py --lan</code>. Phones need the access link shown in the terminal the first time.</p>'}
+  <h2>Using it on a phone</h2><div class="share" id="shareBox" aria-live="polite"><p class="muted">Looking…</p></div>
   ${oldServer ? '<h2>Other ways in</h2><p><a href="/reports/gap-closure-status.html" target="_blank">Gap closure report</a> · <a href="/reports/learning-pathways.html" target="_blank">Learning pathways report</a> · <a href="/reports/survival-tools-cart.html" target="_blank">Supplies planning</a></p>' : ''}`;
   if (IN_WINDOW && window.LBUpdate) LBUpdate.mount(main);   // Check for updates (web/update.js): only when the person asks
+  shareBox();
+}
+// Phones and tablets on the same network, in their own browser. Off until the person turns it on here, and off again at Stop:
+// until then the desktop app has no port open at all. The code is drawn by the engine (engine/qr.py), with nothing fetched.
+async function shareBox(action) {
+  const box = $('#shareBox'); if (!box) return;
+  let s;
+  try {
+    s = action ? await api('/api/share', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action }) }) : await api('/api/share');
+  } catch (e) { box.innerHTML = `<p class="muted">${esc(e.message || 'Sharing is not available in this version.')}</p>`; return }
+  if (!$('#shareBox')) return;
+  if (s.guest) { box.innerHTML = '<p>You are reading this library over the network, from the computer it is open on. What you save here stays in this browser.</p>'; return }
+  if (!s.on) {
+    box.innerHTML = `<p>Phones and tablets on the same Wi-Fi can open this library in their browser: the guides, videos, map and Chat. No internet is needed, and nothing leaves your network. It is off until you turn it on.</p>
+      ${s.error ? `<p class="notice small">${esc(s.error)}</p>` : ''}<p><button class="btn" id="shareOn">Share on this network</button></p>`;
+    $('#shareOn').onclick = e => { e.target.disabled = true; shareBox('start') };
+    return;
+  }
+  box.innerHTML = `${s.url ? `<div class="share-on"><div class="share-qr">${s.qr}</div><div><p><b>Point a phone’s camera at this code</b>, or type the link into its browser:</p>
+      <p class="share-link"><code>${esc(s.url)}</code></p>
+      <p class="small muted">The phone must be on the same Wi-Fi as this computer. Anyone on that network who has this link can read the library and ask the assistant, and the link is not encrypted on the way, so share it only on a network you trust.</p></div></div>`
+    : '<p class="notice small">Sharing is on, but this computer is not on a network a phone could reach it over. Join a Wi-Fi network (or turn on a phone’s hotspot and join that), then open this page again.</p>'}
+    ${s.stoppable ? '<p><button class="btn plain" id="shareOff">Stop sharing</button></p>' : '<p class="small muted">Sharing was turned on when this was started, with --lan. It stops when the program is closed.</p>'}`;
+  const off = $('#shareOff'); if (off) off.onclick = e => { e.target.disabled = true; shareBox('stop') };
 }
 
 route();

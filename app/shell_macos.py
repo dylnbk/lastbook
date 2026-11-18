@@ -480,6 +480,10 @@ class Shell:
 
     def build(self):
         cfg = WebKit.WKWebViewConfiguration.alloc().init()
+        if os.environ.get('LASTBOOK_PORTABLE') == '1' or getattr(self.bridge.server, 'PORTABLE', False):
+            # A library that travels leaves no web storage on this Mac: what the person keeps is saved in the library's own
+            # folder (engine/userstore.py), so the page needs nothing kept here, and this store is gone when the window closes.
+            cfg.setWebsiteDataStore_(WebKit.WKWebsiteDataStore.nonPersistentDataStore())
         self.scheme = SchemeHandler.alloc().init()
         self.scheme.setBridge_(self.bridge)
         cfg.setURLSchemeHandler_forURLScheme_(self.scheme, SCHEME)
@@ -535,17 +539,50 @@ class Shell:
         except Exception:
             traceback.print_exc()
 
+    def travelling(self):
+        """For a library that travels, the folder on its own drive where the program keeps its working state ('' when that
+        cannot be told). None for an ordinary library."""
+        if not (os.environ.get('LASTBOOK_PORTABLE') == '1' or getattr(self.bridge.server, 'PORTABLE', False)):
+            return None
+        state = os.environ.get('LASTBOOK_PORTABLE_STATE')
+        if not state and os.environ.get('LASTBOOK_DATA'):
+            state = os.path.join(os.path.dirname(os.path.abspath(os.environ['LASTBOOK_DATA'])), '.lastbook')
+        return state or ''
+
+    def rule_stores(self):
+        """Where the compiled rule list may be kept, in the order to try. The system's own place is under this Mac's Library,
+        so a library that travels keeps it on its drive first; if that drive will not hold it, this Mac's place is still
+        better than no rule list, which would mean not opening at all."""
+        stores = []
+        state = self.travelling()
+        if state:
+            try:
+                folder = os.path.join(state, 'webkit-rules')
+                os.makedirs(folder, exist_ok=True)
+                stores.append(WebKit.WKContentRuleListStore.storeWithURL_(Foundation.NSURL.fileURLWithPath_isDirectory_(folder, True)))
+            except Exception:
+                traceback.print_exc()
+        stores.append(WebKit.WKContentRuleListStore.defaultStore())
+        return stores
+
     def switch_off_network(self):
         """Compiling takes a moment and ends on the main thread. The first page waits for it."""
+        stores = self.rule_stores()
+
         def compiled(rules, error):
             if rules is None:
                 print('no network rule list:', error, flush=True)
+                if stores:      # the drive would not hold it: this Mac's own place
+                    return attempt()
                 return self.refuse_to_open()
             self.view.configuration().userContentController().addContentRuleList_(rules)
             self.network_off = True
             self.go_home()
 
-        WebKit.WKContentRuleListStore.defaultStore().compileContentRuleListForIdentifier_encodedContentRuleList_completionHandler_('lastbook-no-network', NO_NETWORK, compiled)
+        def attempt():
+            stores.pop(0).compileContentRuleListForIdentifier_encodedContentRuleList_completionHandler_('lastbook-no-network', NO_NETWORK, compiled)
+
+        attempt()
 
     def refuse_to_open(self):
         show_error(NO_NETWORK_REFUSED)

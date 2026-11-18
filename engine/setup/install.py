@@ -271,6 +271,17 @@ def carry_over(old, new):
     if state.is_file() and not (new / 'derived' / 'llm' / 'state.json').exists():
         (new / 'derived' / 'llm').mkdir(parents=True, exist_ok=True)
         shutil.copy2(state, new / 'derived' / 'llm' / 'state.json')
+    # Saved items and chats (engine/userstore.py), and the mark of a library that travels: copied, so the old library keeps
+    # its own if the new one does not open and the old one is put back.
+    user = old / 'user'
+    if user.is_dir() and not (new / 'user').exists():
+        try:
+            shutil.copytree(user, new / 'user', ignore=shutil.ignore_patterns('.*'))
+        except (OSError, shutil.Error) as e:
+            print('setup: what the person kept could not be carried over:', type(e).__name__, flush=True)
+    mark = old / 'portable.json'
+    if mark.is_file() and not (new / 'portable.json').exists():
+        shutil.copy2(mark, new / 'portable.json')
     return moved
 
 

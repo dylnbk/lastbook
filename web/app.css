@@ -906,3 +906,11 @@ body.map-maxed{overflow:hidden}
   html.wcap .mapwrap.max,html.wcap .chat-side.open{top:var(--cap-h)}   /* the title bar stays, as in Windows' own apps */
   html.wcap:fullscreen .capband,html.wcap:has(:fullscreen) .capband{display:none}   /* nothing of the band, its drag area included, over a page in full screen */
 }
+
+/* ---- About: sharing with phones on the same network (the code is always dark on white, whatever the theme, so a camera reads it) */
+.share{max-width:760px}
+.share-on{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}
+.share-qr{flex:0 0 auto;width:208px;padding:8px;background:#fff;border:1px solid var(--line);border-radius:var(--r2);line-height:0}
+.share-qr svg{width:100%;height:auto;display:block}
+.share-on>div:last-child{flex:1 1 280px;min-width:0}
+.share-link code{display:inline-block;padding:8px 10px;border-radius:var(--r-ctl);background:var(--sunk);font-size:14.5px;overflow-wrap:anywhere;user-select:all;-webkit-user-select:all}

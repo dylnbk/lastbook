@@ -4,7 +4,7 @@ import re
 import sqlite3
 from pathlib import Path
 
-from engine.paths import ro_uri
+from engine.paths import ro_uri, visible
 
 # Keep normalization compatible with tools/build_addresses.py.
 WORDS = {
@@ -85,7 +85,7 @@ def find_addresses(query, geo_directory, limit=8, near=None):
     if not words:
         return []
     geo_directory = Path(geo_directory)
-    paths = sorted((geo_directory / 'addresses').glob('*.sqlite'))
+    paths = sorted(visible((geo_directory / 'addresses').glob('*.sqlite')))
     if state:
         paths = [path for path in paths if path.stem.upper() == state]
     legacy = geo_directory / 'addresses.sqlite'
