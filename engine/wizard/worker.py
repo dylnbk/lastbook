@@ -34,10 +34,25 @@ def threads_for(effort, cores=None):
     return cores if t == 0 else t if t else max(2, min(cores - 2, cores * 6 // 10))
 
 
+_writing = threading.Lock()
+
+
 def write_json(path, obj):
-    part = path.with_name(path.name + '.part')
-    part.write_text(json.dumps(obj), encoding='utf-8')
-    os.replace(part, path)
+    """Whole or not at all, and one writer at a time: the build's last word and the two-second note are written by
+    different threads. On Windows a file cannot be replaced while someone is reading it (the app, asking how the build is
+    doing), so that is tried again; without this the last word was lost and the build seemed to be running for ever
+    (found by the first run of the tests on Windows)."""
+    with _writing:
+        part = path.with_name(path.name + '.part')
+        part.write_text(json.dumps(obj), encoding='utf-8')
+        for attempt in range(40):
+            try:
+                os.replace(part, path)
+                return
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                time.sleep(0.05)
 
 
 def alive(pid):
@@ -46,12 +61,13 @@ def alive(pid):
     if os.name == 'nt':
         import ctypes
         k = ctypes.windll.kernel32
+        k.OpenProcess.restype = ctypes.c_void_p         # a handle is as wide as a pointer: not to be cut to 32 bits
         h = k.OpenProcess(0x1000, False, int(pid))      # PROCESS_QUERY_LIMITED_INFORMATION
         if not h:
             return False
         code = ctypes.c_ulong()
-        ok = k.GetExitCodeProcess(h, ctypes.byref(code))
-        k.CloseHandle(h)
+        ok = k.GetExitCodeProcess(ctypes.c_void_p(h), ctypes.byref(code))
+        k.CloseHandle(ctypes.c_void_p(h))
         return bool(ok) and code.value == 259           # STILL_ACTIVE
     try:
         os.kill(int(pid), 0)

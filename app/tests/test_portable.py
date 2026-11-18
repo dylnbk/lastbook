@@ -130,7 +130,7 @@ class Found(unittest.TestCase):
         def setup():
             seen.update(folders=main.app_folders(), parent=main.default_parent(), places=list(main.places()), env=os.environ.get('LASTBOOK_PORTABLE'))
             return 7
-        patches = [mock.patch.dict(os.environ, {'HOME': str(home), 'PATH': os.environ.get('PATH', '')}, clear=True), mock.patch.object(main.sys, 'platform', 'darwin'),
+        patches = [mock.patch.dict(os.environ, {'HOME': str(home), 'USERPROFILE': str(home), 'PATH': os.environ.get('PATH', '')}, clear=True), mock.patch.object(main.sys, 'platform', 'darwin'),
                    mock.patch.object(sys, 'argv', ['Lastbook', *argv]), mock.patch.object(main, 'run_setup', setup), mock.patch.object(main, 'TRAVELLING', None)]
         if program:
             patches.append(mock.patch.object(portable, 'program', lambda: program))

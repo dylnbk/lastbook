@@ -54,9 +54,16 @@ def connect(path, init=None, synchronous='FULL', timeout=30, check_same_thread=F
         finally:
             first.close()       # made, and closed: only now does the drive give it the number it will keep
     db = sqlite3.connect(path, timeout=timeout, isolation_level=None, check_same_thread=check_same_thread)
-    _prepare(db, synchronous)
-    if init is not None and not fresh:
-        init(db)                # an older file may lack what a newer version adds: init is written to be run again
+    try:
+        _prepare(db, synchronous)
+        if init is not None and not fresh:
+            init(db)            # an older file may lack what a newer version adds: init is written to be run again
+    except BaseException:
+        # Closed before the error goes on up. Left open, the file could not be moved aside on Windows, where nothing
+        # that is open can be renamed: the user's store found a damaged file and then could not set it aside
+        # (found by the first run of the tests on Windows).
+        db.close()
+        raise
     return db
 
 

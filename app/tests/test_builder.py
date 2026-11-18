@@ -145,6 +145,7 @@ class Where(Base):
         self.assertTrue(drives.judge(None)['ok'])                   # not known is not refused: the person is told it is not known
         self.assertIn('cannot tell', drives.judge(None)['note'])
 
+    @unittest.skipIf(os.name == 'nt', 'a Mac\'s and Linux\'s way of naming disks: Windows is asked another way')
     def test_which_disk_a_folder_is_on(self):
         mounts = [('/', 'apfs', ['local']), ('/Volumes/Stick', 'msdos', ['local']), ('/Volumes/Stick 2', 'exfat', ['local'])]
         with mock.patch.object(sys, 'platform', 'darwin'), mock.patch.object(drives, '_mac_mounts', return_value=mounts), \

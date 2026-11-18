@@ -383,7 +383,9 @@ import aikit
 with mock.patch.object(models, "SMALL", 0), mock.patch.object(models, "places", return_value=[]):
     m = models.found({str(self.data)!r}, hw=aikit.HW16)[0]
 r = runtime.Runner({str(self.data)!r})
-print("ready" if r.ensure(m) is None else "failed", flush=True)
+ok = r.ensure(m) is None
+print("folder", getattr(r, "folder", ""), flush=True)
+print("ready" if ok else "failed", flush=True)
 time.sleep(60)
 ''')
         env = {**os.environ, **self.env, 'OLLAMA_MODELS': str(self.tmp / 'none')}
@@ -393,6 +395,8 @@ time.sleep(60)
             while said not in ('ready', 'failed'):          # its own log lines come first
                 said = p.stdout.readline().strip()
                 self.assertTrue(said, 'the stand-in for Lastbook ended early')
+                if said.startswith('folder ') and Path(said[7:]).name.startswith('lb-ai-'):
+                    self.addCleanup(shutil.rmtree, said[7:], True)      # killed outright, it cannot tidy the folder its socket was in: the test does
             self.assertEqual(said, 'ready')
             pid = aikit.recorded(self.record)[0]['pid']
             os.kill(pid, 0)                     # the model program is there
@@ -667,6 +671,7 @@ class Asked(Temp):
         env = {'LASTBOOK_LLAMA_SERVER': str(self.server), 'FAKE_LLAMA_RECORD': str(self.record), 'FAKE_LLAMA_SCRIPT': json.dumps(script)}
         with mock.patch.dict(os.environ, env):
             assistant.chat([{'role': 'user', 'content': question}], None, events.append, lambda: False)
+            self.status = assistant.model_status()      # asked while the stand-in is the program that runs models: outside, it is whatever this computer has, or nothing
         return events, [x['request'] for x in aikit.recorded(self.record) if 'request' in x]
 
     def test_search_then_an_answer_with_its_source(self):
@@ -689,7 +694,7 @@ class Asked(Temp):
         self.assertIn('search_library', names)
         self.assertNotIn('view_page', first['messages'][0]['content'])
         self.assertEqual(requests[1]['messages'][-1]['role'], 'tool')
-        self.assertEqual(assistant.model_status()['picked']['state'], 'ready')
+        self.assertEqual(self.status['picked']['state'], 'ready')
 
     def test_a_model_with_a_projector_is_offered_page_images(self):
         events, requests = self.ask([[{'content': 'See the page [S1].'}]], vision=True)
@@ -1016,17 +1021,18 @@ class Carried(Temp):
         from engine.ai import carry
         src = self.tmp / 'App/llamacpp/metal'
         src.mkdir(parents=True)
-        for name, body in (('llama-server', b'#!/bin/sh\n'), ('libllama.0.dylib', b'lib'), ('libggml.so.1', b'lib'), ('LICENSE', b'MIT'), ('.version', b'1'),
+        exe = runtime.EXE           # llama-server, or llama-server.exe on Windows
+        for name, body in ((exe, b'#!/bin/sh\n'), ('libllama.0.dylib', b'lib'), ('libggml.so.1', b'lib'), ('LICENSE', b'MIT'), ('.version', b'1'),
                            ('notes.txt', b'not needed'), ('llama-cli', b'another tool')):
             (src / name).write_bytes(body)
-        (src / 'llama-server').chmod(0o755)
-        with mock.patch.dict(os.environ, {'LASTBOOK_LLAMA_SERVER': str(src / 'llama-server')}):
+        (src / exe).chmod(0o755)
+        with mock.patch.dict(os.environ, {'LASTBOOK_LLAMA_SERVER': str(src / exe)}):
             got = carry.runtime(self.data)
         dest = self.data / 'models' / 'runtime' / runtime.platform_folder()
         self.assertEqual(got['folder'], str(dest))
-        self.assertEqual(sorted(p.name for p in dest.iterdir()), ['.version', 'LICENSE', 'copied-from.json', 'libggml.so.1', 'libllama.0.dylib', 'llama-server'])
-        self.assertTrue(os.access(dest / 'llama-server', os.X_OK))
-        self.assertEqual(runtime.find(self.data), {'path': str(dest / 'llama-server'), 'origin': 'this library'})      # and it is the one used from now on
+        self.assertEqual(sorted(p.name for p in dest.iterdir()), sorted(['.version', 'LICENSE', 'copied-from.json', 'libggml.so.1', 'libllama.0.dylib', exe]))
+        self.assertTrue(os.access(dest / exe, os.X_OK))
+        self.assertEqual(runtime.find(self.data), {'path': str(dest / exe), 'origin': 'this library'})      # and it is the one used from now on
         with self.assertRaisesRegex(carry.Refused, 'already the one in use'):
             carry.runtime(self.data)
         with mock.patch.object(runtime, 'find', return_value=None):
@@ -1130,7 +1136,7 @@ class Requests(Temp):
         with mock.patch.object(download, 'Fetch', Fetch), mock.patch.object(hf_import.models, 'folder', return_value=self.data / 'models'):
             status, job = self.post('/api/ai/import', {'repo': 'acme/talker-GGUF'})
             self.assertEqual((status, job['state'], job['version']), (200, 'downloading', 'talker-Q4_K_M.gguf'))
-            server.AI_JOBS.thread.join(5)
+            server.AI_JOBS.thread.join(120)     # five seconds was enough on a Mac and not on a slower disk
         self.assertEqual(json.loads(ask('GET', '/api/ai/import')[2])['state'], 'done')
         self.assertEqual(self.p.choice()['id'], 'drive:acme--talker-GGUF/talker-Q4_K_M.gguf')       # what was just brought is what answers
         folder = self.data / 'models' / 'acme--talker-GGUF'

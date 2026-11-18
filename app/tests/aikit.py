@@ -4,6 +4,7 @@ import os
 import stat
 import struct
 import sys
+import unittest
 from pathlib import Path
 
 TYPES = {int: (4, '<I'), float: (6, '<f'), bool: (7, '<?')}
@@ -54,15 +55,37 @@ def plain(name='Test Model', arch='testarch', layers=24, embed=2048, heads=16, k
     return m
 
 
+def _hole(f, size):
+    """The open file made `size` long with nothing written in between. On Windows truncate() is not that: asked for a 40 GB
+    file, it ran out of disk on the first run of these tests there, and NTFS makes a hole only in a file marked sparse.
+    So there the file is marked and its last byte written."""
+    if os.name != 'nt':
+        f.truncate(size)
+        return
+    import ctypes
+    import msvcrt
+    f.flush()
+    done = ctypes.c_ulong()
+    ctypes.windll.kernel32.DeviceIoControl(ctypes.c_void_p(msvcrt.get_osfhandle(f.fileno())), 0x900C4, None, 0, None, 0, ctypes.byref(done), None)     # FSCTL_SET_SPARSE
+    f.seek(size - 1)
+    f.write(b'\0')
+    f.flush()
+
+
 def write_model(path, meta=None, size=None):
     """A file that opens like a model. size: its length on disk (the rest is a hole: nothing is written)."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     data = gguf_bytes(meta if meta is not None else plain())
-    with open(path, 'wb') as f:
-        f.write(data)
-        if size and size > len(data):
-            f.truncate(size)
+    try:
+        with open(path, 'wb') as f:
+            f.write(data)
+            if size and size > len(data):
+                _hole(f, size)
+    except OSError as e:
+        if e.errno == 28:       # a disk that cannot make a hole, and has no room for the real thing
+            raise unittest.SkipTest('this disk cannot hold a file of that size, even one that is mostly a hole')
+        raise
     return path
 
 
