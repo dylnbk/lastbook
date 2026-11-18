@@ -165,6 +165,11 @@ def public(r, full=False):
         out['thumb'] = th if th and (LIB / th).is_file() else None
     if (r.get('searchability') or '').startswith('image-only'):
         out['imageOnly'] = True
+    if r['kind'] == 'video' and r.get('words_only'):
+        # A library made of chosen parts (engine/wizard) may hold a video's words without its picture: left out to save room,
+        # or (pending) not yet made smaller by a build that is still running.
+        out['wordsOnly'] = True
+        out['pending'] = bool(r.get('pending'))
     rem = remote_records().get(r['path']) if r['kind'] == 'video' else None
     if rem:
         out['remote'] = rem.get('host')

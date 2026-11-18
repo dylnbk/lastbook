@@ -610,8 +610,11 @@ async function watch(id, t, from) {
   main.innerHTML = `<div class="rtop">${backButton(from, 'Videos')}</div>
   <div class="watch">
     <div>
-      <div class="player"><video id="vid" controls preload="metadata" playsinline src="${fileUrl(d.path)}${t ? '#t=' + t : ''}"></video></div>
-      <div class="video-speed"><label for="videoSpeed">Playback speed</label><select id="videoSpeed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>Normal</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></div>
+      ${d.wordsOnly ? `<div class="notice words-only"><b>${d.pending ? 'This video is not here yet.' : 'This library holds this video’s words, not its picture.'}</b> ${d.pending
+        ? 'The library is still being built, and this video is waiting to be made smaller. Its words are here now, with the time each was said.'
+        : 'The picture was left out to save room when the library was made. What is said in it is here in full, with the time each thing was said, and can be searched and asked about.'}</div>` : ''}
+      <div class="player"${d.wordsOnly ? ' hidden' : ''}><video id="vid" controls preload="metadata" playsinline ${d.wordsOnly ? '' : `src="${fileUrl(d.path)}${t ? '#t=' + t : ''}"`}></video></div>
+      <div class="video-speed"${d.wordsOnly ? ' hidden' : ''}><label for="videoSpeed">Playback speed</label><select id="videoSpeed"><option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>Normal</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select></div>
       ${d.remote ? `<p class="small muted" style="margin:6px 0 0">Stored on the remote drive “${esc(d.remote)}”. It plays only while that computer is reachable.</p>` : ''}
       <h1 class="vtitle">${esc(d.title)}</h1>
       <div class="vmeta"><b>${esc(d.publisher || '')}</b><span>${fmtDur(d.duration)}</span>${d.upload_date ? `<span>${esc(d.upload_date.replace(/(\d{4})(\d\d)(\d\d)/, '$1-$2-$3'))}</span>` : ''}<span>${esc(d.trust)}</span></div>

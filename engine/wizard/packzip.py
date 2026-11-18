@@ -365,7 +365,7 @@ class Puller:
                     try:
                         self._store(m, raw)
                     except Refused as e:     # this one member; the rest of the run is still good
-                        state['bad'].append(str(e))
+                        state['bad'].append((m.name, str(e)))
             buf.clear()                      # past the last member wanted: whatever follows is not kept
 
         download.stream_range(self.pack.url, start, end, sink, self.control, allowed=self.allowed, context=self.context, etag=self.pack.etag)
@@ -373,7 +373,7 @@ class Puller:
             raise download.Failed('unpack', 'The pack ended before the files its list names.')
         if state['bad']:
             with self.lock:
-                self.errors.extend((members[0].name, b) for b in state['bad'])
+                self.errors.extend(state['bad'])        # each under its own name: the caller leaves out that file, not its neighbour
 
     def _big(self, members):
         """One large member on a connection of its own, written as it arrives. A part already here is carried on from."""

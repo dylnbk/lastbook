@@ -67,8 +67,11 @@ its elevation at 3 MB/s):
 | Isle of Man | detail | 6 MB | 14 s | 19 MB | 77,000 features, 585 help points |
 | Ireland and Northern Ireland | detail | 418 MB | 10 min | 1.4 GB | 6.5 million features, 38,600 help points, 114,000 streets, 49,000 postcodes |
 | Great Britain | detail | 2.2 GB | 62 min | 6.6 GB | 29.3 million features, 252,000 help points, 953,000 streets, 1.78 million postcodes |
-| Bulgaria | overview | 178 MB | 1 min | 43 MB | 70,000 features, 27,000 help points |
-| Norway | overview | 1.3 GB | 10 min | 450 MB | its coast is most of it |
+| Bulgaria | overview | 178 MB | 43 s (its elevation was already fetched) | 43 MB | 66,000 features, 27,400 help points |
+| Norway | overview | 1.4 GB | 10 min | 470 MB | 339,000 features, 36,600 help points, and a very long coast |
+
+These are from the builder's first version. The second adds summits, ferries and borders, so its regions are a
+little larger.
 
 Great Britain's hour included about fifteen minutes lost to a mistake of mine (a large AI model loaded beside it).
 
