@@ -794,8 +794,9 @@ class Bridge:
         return path.startswith(FRAME_PREFIXES) and '/..' not in path and '\\' not in path
 
     def top_url_ok(self, url):
-        """The only thing the window's top level may show is the app's own page, at any of its # routes, or its setup page."""
-        return url.split('#', 1)[0] in (self.origin, self.origin + '/', self.origin + '/ui/setup.html')
+        """The only thing the window's top level may show is the app's own page, at any of its # routes, its setup page, or the
+        page a library of chosen parts is built from."""
+        return url.split('#', 1)[0] in (self.origin, self.origin + '/', self.origin + '/ui/setup.html', self.origin + '/ui/wizard.html')
 
     def new_window(self, url, from_top, gesture):
         """Every new-window request is cancelled by the shell. This says what, if anything, happens instead:

@@ -8,6 +8,7 @@
   python tools/build_world_region.py --list europe                      what can be asked for (554 regions; no argument: continents)
   python tools/build_world_region.py --remove france
   python tools/build_world_region.py --write-catalog                    refresh content/regions/catalog.json from Geofabrik
+  python tools/build_world_region.py --write-catalog --sizes            ...asking the server how large each extract is (a few minutes)
 
   --skip-built       leave alone a region already built at this level by this version of the builder
   --only-fetched     build only regions whose extract is already in the sources folder (nothing large is downloaded)
@@ -43,6 +44,7 @@ def main():
     ap.add_argument('--list', nargs='?', const='', default=None)
     ap.add_argument('--remove', action='store_true')
     ap.add_argument('--write-catalog', action='store_true')
+    ap.add_argument('--sizes', action='store_true')
     ap.add_argument('--data')
     ap.add_argument('--sources')
     ap.add_argument('--rate', type=float)
@@ -74,8 +76,28 @@ def main():
     if a.write_catalog:
         out = paths.APP / 'content' / 'regions' / 'catalog.json'
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(json.dumps(catalog.slim(cat), separators=(',', ':'), ensure_ascii=False), encoding='utf-8')
-        say(f'{len(cat.entries)} regions written to {out}')
+        try:
+            was = json.loads(out.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            was = {}
+        sizes = {r['id']: r['mb'] for r in was.get('regions', []) if r.get('mb') and not r.get('summed')}
+        as_of = was.get('sizes_as_of')
+        if a.sizes:
+            # One short question each (the first byte of the file), a few a second: the server says how large the extract is
+            for i, e in enumerate(sorted(cat.entries.values(), key=lambda e: e.id), 1):
+                try:
+                    size = download.head(e.pbf).get('size')
+                except download.Failed as err:
+                    say(f'  {e.id}: {err.message}')
+                    continue
+                if size:
+                    sizes[e.id] = round(size / 1e6, 1)
+                if i % 50 == 0:
+                    say(f'  {i} of {len(cat.entries)} sizes asked')
+                time.sleep(0.15)
+            as_of = time.strftime('%Y-%m-%d')
+        out.write_text(json.dumps(catalog.slim(cat, sizes, as_of), separators=(',', ':'), ensure_ascii=False), encoding='utf-8')
+        say(f'{len(cat.entries)} regions written to {out}' + (f', {len(sizes)} with the size of their extract' if sizes else ''))
         return 0
     if a.list is not None:
         for e in (cat.children(a.list) if a.list else [e for e in cat.entries.values() if not e.parent]):

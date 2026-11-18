@@ -169,6 +169,40 @@ class Written(Temp):
         everything = library.write_search(src, self.tmp / 'lib2', {r['id'] for r in recs})
         self.assertEqual(everything, sqlite3.connect(src).execute('SELECT COUNT(*) FROM pages').fetchone()[0])
 
+    def test_the_index_is_the_same_written_anew_or_cut_down(self):
+        """Few pages kept: they are written into a new index. Most kept: the pack's is copied and the rest removed. Either way, the same."""
+        recs, files = buildkit.records_and_files()
+        src = self.tmp / 'search.sqlite'
+        buildkit.search_db(src, recs, files)
+        before = src.read_bytes()
+
+        def rows(lib):
+            db = sqlite3.connect(lib / 'search.sqlite')
+            try:
+                return (db.execute('SELECT rowid, doc_id, title, collection, category, path, page, body FROM pages ORDER BY rowid').fetchall(),
+                        db.execute("SELECT doc_id, page FROM pages WHERE pages MATCH 'boil OR canning OR matrix' ORDER BY rowid").fetchall(),
+                        db.execute("SELECT sql FROM sqlite_master WHERE name='pages'").fetchone()[0])
+            finally:
+                db.close()
+        few = {'water-guide', 'canning-book'}
+        most = {r['id'] for r in recs} - {'water-guide'}
+        for keep in (few, most):
+            n = library.write_search(src, self.tmp / 'a', keep)
+            with mock.patch.object(library, '_fresh_search', return_value=None):
+                self.assertEqual(library.write_search(src, self.tmp / 'b', keep), n)
+            self.assertEqual(rows(self.tmp / 'a'), rows(self.tmp / 'b'))                    # row numbers too: a page keeps the number it had
+            self.assertEqual({r[1] for r in rows(self.tmp / 'a')[0]}, {i for i in keep if any(r['id'] == i and r.get('text_path') for r in recs)})
+            self.assertEqual(sorted(p.name for p in (self.tmp / 'a').iterdir()), ['search.sqlite'])
+        self.assertIsNotNone(library._fresh_search(src, self.tmp / 'few.sqlite', few))      # which way each went
+        self.assertIsNone(library._fresh_search(src, self.tmp / 'most.sqlite', most))
+        self.assertFalse((self.tmp / 'most.sqlite').exists())
+        self.assertEqual(src.read_bytes(), before)
+        c = download.Control()
+        c.stop('paused')
+        with self.assertRaises(download.Stopped):
+            library.write_search(src, self.tmp / 'c', few, c)
+        self.assertEqual([p.name for p in (self.tmp / 'c').iterdir()] if (self.tmp / 'c').is_dir() else [], [])       # stopped: nothing half-written is left
+
     def test_counts_are_of_what_is_there(self):
         recs, _ = buildkit.records_and_files()
         kept = [dict(r, words_only=True) if r['id'] == 'video-campfire' else r for r in recs if r['id'] != 'glider-handbook']
@@ -308,7 +342,9 @@ class Built(Temp):
 
         class Builder:
             def __init__(self, data, sources_folder=None, say=None, control=None, workers=2):
-                asked.append(('data', str(data), sources_folder))
+                asked.append(('data', str(data), str(sources_folder)))
+                Path(sources_folder).mkdir(parents=True, exist_ok=True)
+                (Path(sources_folder) / 'extract.osm.pbf').write_bytes(b'what a map is made from')
 
             def current(self, rid, level):
                 return rid == 'isle-of-man'
@@ -321,13 +357,70 @@ class Built(Temp):
             def close(self):
                 asked.append('closed')
         maps = [{'id': 'isle-of-man'}, {'id': 'france', 'level': 'overview', 'terrain': False}, {'id': 'atlantis'}]
-        with mock.patch.object(mapbuild, 'Builder', Builder):
-            b, status = self.run_build(dict(EVERYTHING, maps=maps), sources_folder='/somewhere/sources')
-        self.assertEqual(asked, [('data', str(self.tmp / 'drive' / 'LastbookData'), '/somewhere/sources'), ('france', 'overview', False), ('atlantis', 'detail', True), 'closed'])
+        kept = self.tmp / 'somewhere' / 'sources'
+        with mock.patch.object(mapbuild, 'Builder', Builder), mock.patch.dict(os.environ, {'LASTBOOK_MAP_SOURCES': ''}):
+            b, status = self.run_build(dict(EVERYTHING, maps=maps), sources_folder=str(kept))
+        self.assertEqual(asked, [('data', str(self.tmp / 'drive' / 'LastbookData'), str(kept)), ('france', 'overview', False), ('atlantis', 'detail', True), 'closed'])
         self.assertEqual(status['phase'], 'done')
+        self.assertEqual((status['maps_done'], status['maps_total']), (3, 3))
         self.assertEqual(len(status['problems']), 1)
         self.assertIn('atlantis', status['problems'][0])
         self.assertEqual(json.loads((self.tmp / 'drive' / 'LastbookData' / 'pack.json').read_text())['regions'], ['isle-of-man', 'france', 'atlantis'])
+        self.assertTrue((kept / 'extract.osm.pbf').is_file())                               # a folder someone named for this is theirs: left alone
+
+    def test_what_maps_are_made_from_is_kept_beside_the_library_and_then_deleted(self):
+        from engine.mapbuild import build as mapbuild
+        seen = []
+
+        class Builder:
+            def __init__(self, data, sources_folder=None, say=None, control=None, workers=2):
+                seen.append(Path(sources_folder))
+                Path(sources_folder).mkdir(parents=True, exist_ok=True)
+                (Path(sources_folder) / 'extract.osm.pbf').write_bytes(b'what a map is made from')
+            current = lambda self, rid, level: False
+            close = lambda self: None
+
+            def build(self, rid, level='detail', terrain=True):
+                if rid == 'atlantis':
+                    raise KeyError(rid)
+        beside = self.tmp / 'drive' / '.lastbook' / 'map-sources'
+        source = self.source()
+        with mock.patch.object(mapbuild, 'Builder', Builder), mock.patch.dict(os.environ, {'LASTBOOK_MAP_SOURCES': ''}):
+            b, status = self.run_build(dict(EVERYTHING, maps=[{'id': 'atlantis'}]), source=source)
+            self.assertEqual(seen, [beside])                                                # on the library's drive, never in the home folder
+            self.assertTrue((beside / 'extract.osm.pbf').is_file())                         # a map failed: what it was made from is kept for the next try
+            b, status = self.run_build(dict(EVERYTHING, maps=[{'id': 'france'}], keep_sources=True), source=source)
+            self.assertTrue(beside.is_dir())                                                # asked to keep it
+            b, status = self.run_build(dict(EVERYTHING, maps=[{'id': 'france'}]), source=source)
+        self.assertEqual(status['problems'], [])
+        self.assertFalse(beside.exists())                                                   # several times the maps' size, and no use to the library once built
+
+    def test_the_search_index_is_written_once_unless_what_is_kept_changes(self):
+        source = self.source()
+        lib = self.tmp / 'drive' / 'LastbookData' / 'library-data'
+        with mock.patch.object(library, 'write_search', wraps=library.write_search) as wrote:
+            self.run_build(dict(EVERYTHING), source=source)
+            self.assertEqual(wrote.call_count, 1)                                           # when the documents came in, and not again at the end
+            self.run_build(dict(EVERYTHING), source=source)
+            self.assertEqual(wrote.call_count, 1)                                           # nor by a run that changes nothing
+            (lib / 'search.sqlite').unlink()
+            self.run_build(dict(EVERYTHING), source=source)
+            self.assertEqual(wrote.call_count, 2)                                           # gone: written again
+            b, status = self.run_build(dict(EVERYTHING, documents=['water']), source=source)
+            self.assertEqual(wrote.call_count, 3)                                           # fewer records kept: their words go too
+        self.assertEqual(status['phase'], 'done')
+        db = sqlite3.connect(lib / 'search.sqlite')
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM pages WHERE pages MATCH 'thermals OR bleeding'").fetchone()[0], 0)
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM pages WHERE pages MATCH 'boil'").fetchone()[0], 2)
+        db.close()
+
+    def test_a_copy_that_cannot_build_maps_still_builds_the_library(self):
+        with mock.patch.dict(sys.modules, {'engine.mapbuild.build': None}):                 # as a copy packaged without osmium
+            b, status = self.run_build(dict(EVERYTHING, maps=[{'id': 'france'}]))
+        self.assertEqual(status['phase'], 'done')
+        self.assertEqual(len(status['problems']), 1)
+        self.assertIn('cannot build maps', status['problems'][0])
+        self.assertTrue((self.tmp / 'drive' / 'LastbookData' / 'library-data' / 'catalog.json').is_file())
 
 
 @unittest.skipUnless(video.tools() and 'libx264' in video.tools()['encoders'] and 'libx265' in video.tools()['encoders'], 'needs an ffmpeg with libx264 and libx265')

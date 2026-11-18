@@ -230,6 +230,7 @@
       ${c ? '' : '<p class="lead">Choose your state and library. Lastbook downloads them for offline use.</p>'}
       ${computer()}
       ${c ? '' : recommendLine()}
+      <p class="s-rec">${ico('map')}<span><b>Or build your own.</b> Keep only the parts you want, add maps of anywhere in the world, choose the AI model, and put it on a drive that opens on any computer. <a href="/ui/wizard.html">Build your own library</a></span></p>
       ${found ? `<h2>Found on this computer</h2><div class="s-founds">${found}</div>` : ''}
       <section id="mapBox" class="s-map-panel" aria-label="Your local map"></section>
       <h2 id="packH">Library</h2>
@@ -367,7 +368,8 @@
       </div>
       ${old ? `<div class="s-row s-old">${ico('folder', 's-ri')}<span><b>The old library is still here</b><small>${esc(home(old.path))}${old.bytes ? ' · ' + size(old.bytes) : ''}</small></span>${confirmOld ? `<span class="s-confirm"><span>Delete it for good?</span><button class="btn danger" id="oldYes">Delete</button><button class="btn plain" id="oldNo">Keep</button></span>` : `<button class="btn plain" id="rmOld">${ico('trash')}Delete it</button>`}</div>` : ''}
       ${computer()}
-      ${CAN.repair ? `<div class="s-go left"><button class="btn plain" id="repair">${ico('repair')}Check and repair</button></div>` : ''}
+      <div class="s-go left">${CAN.repair ? `<button class="btn plain" id="repair">${ico('repair')}Check and repair</button>` : ''}
+        <a class="btn plain" href="/ui/wizard.html#maps">${ico('map')}Add a map of another region</a><a class="btn plain" href="/ui/wizard.html">Build another library</a></div>
       <p class="s-note${noteOk ? ' ok' : ''}" id="haveNote"${note ? '' : ' hidden'}>${esc(note)}</p>`;
     if ($('#libraryUpdate')) $('#libraryUpdate').onclick = () => { choice.pack = c.pack; choice.ai = !!c.model; go('choose') };
     if ($('#upgrade')) $('#upgrade').onclick = () => { choice.pack = bigger[0].id; choice.ai = !!c.model; go('choose') };

@@ -227,7 +227,11 @@ class Pack:
             bring(path)
         order = {r['id']: i for i, r in enumerate(self.records)}
         keep.sort(key=lambda r: order[r['id']])     # as the pack lists them: the app shows things in the catalog's order
-        return {'records': keep, 'copy': [(p, s, h) for p, (s, h) in copy.items()], 'shrink': shrink, 'bytes': total, 'counts': counts}
+        # The search index is written afresh with only what is kept: about in proportion. The pack's whole one is read to make it.
+        index_whole = self.size(LIB + 'search.sqlite')
+        index = int(index_whole * len(keep) / max(1, len(self.records)))
+        return {'records': keep, 'copy': [(p, s, h) for p, (s, h) in copy.items()], 'shrink': shrink, 'bytes': total + index, 'counts': counts,
+                'index_bytes': index, 'index_whole': index_whole}
 
 
 def read_manifest(text):

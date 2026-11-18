@@ -37,6 +37,7 @@ from engine import saved_pages, address_search, userstore, qr, regions  # noqa: 
 from engine.setup import api as setup_api  # noqa: E402  (the one module that may download: only when the person asks)
 from engine.setup import download as setup_download  # noqa: E402
 from engine.wizard import hf_import  # noqa: E402  (brings an AI model from Hugging Face through engine/setup/download.py, when the person asks)
+from engine.wizard import api as wizard_api  # noqa: E402  (builds a library of chosen parts in a process of its own, when the person asks)
 HERE = lastbook_paths.DATA  # holds derived/
 APP = lastbook_paths.APP  # holds web/ and content/
 LIB = lastbook_paths.LIB
@@ -2230,6 +2231,8 @@ class Handler(library.Handler):
         rpath = urllib.parse.urlsplit(self.path).path
         if rpath.startswith('/api/setup/'):  # first-run setup and Library and local AI: engine/setup/api.py, this computer only
             return setup_api.handle(self, 'POST', rpath)
+        if rpath.startswith('/api/wizard/'):  # a library of chosen parts, built here: engine/wizard/api.py, this computer only
+            return wizard_api.handle(self, 'POST', rpath)
         if rpath.startswith('/api/update/'):  # Check for updates, when the person asks: engine/update.py, this computer only
             from engine import update
             return update.handle(self, 'POST', rpath)
@@ -2345,6 +2348,8 @@ class Handler(library.Handler):
             qs = {k: v[0] for k, v in urllib.parse.parse_qs(url.query).items()}
             if path.startswith('/api/setup/'):
                 return setup_api.handle(self, 'GET', path)
+            if path.startswith('/api/wizard/'):
+                return wizard_api.handle(self, 'GET', path)
             if path.startswith('/api/update/'):
                 from engine import update
                 return update.handle(self, 'GET', path)

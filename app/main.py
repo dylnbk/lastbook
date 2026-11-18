@@ -431,6 +431,8 @@ def main():
     if not given or note:
         setup_api.opened(app_folders()[0], data, note)
     setup_api.configure(mode='manage', current=data, **setup_options())
+    from engine.wizard import api as wizard_api
+    wizard_api.app_started()        # a build left running when its library was opened is carried on
     import bridge as B
     if sys.platform == 'darwin':
         import shell_macos
@@ -447,9 +449,21 @@ def main():
     return 0
 
 
+def helper_process():
+    """A packaged app is one program, so the work it does in a process of its own starts that program again with a word
+    saying what for. Returns an exit code when this run is such a helper, None when it is the app itself."""
+    import multiprocessing
+    multiprocessing.freeze_support()        # the processes a map build makes for elevation tiles: they end here
+    if len(sys.argv) == 3 and sys.argv[1] == '--wizard-worker':     # one build of a library of chosen parts (engine/wizard/worker.py)
+        from engine.wizard import worker
+        return worker.run(sys.argv[2])
+    return None
+
+
 if __name__ == '__main__':
     try:
-        sys.exit(main())
+        code = helper_process()
+        sys.exit(main() if code is None else code)
     except SystemExit as e:
         if isinstance(e.code, str):   # the engine refusing a setting: a packaged app has no console to say so on
             show_error(e.code)

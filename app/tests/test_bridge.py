@@ -720,9 +720,9 @@ class Both:
 
     def test_top_rule(self):
         o = self.b.origin
-        for u in (o, o + '/', o + '/#/read/x?p=1', o + '/#/'):
+        for u in (o, o + '/', o + '/#/read/x?p=1', o + '/#/', o + '/ui/setup.html', o + '/ui/wizard.html', o + '/ui/wizard.html#maps'):
             self.assertTrue(self.b.top_url_ok(u), u)
-        for u in (o + '/pages/s.html', o + '/documents/s.pdf', o + '/api/health', o + '/ui/app.js', o + '/index.html', o + '/?x=1', 'https://evil.example/', 'about:blank', 'data:text/html,x', 'blob:x', o + '.evil/', 'javascript:1'):
+        for u in (o + '/ui/wizard.html?x=1', o + '/ui/wizard.js', o + '/ui/wizard.html/..', o + '/pages/s.html', o + '/documents/s.pdf', o + '/api/health', o + '/ui/app.js', o + '/index.html', o + '/?x=1', 'https://evil.example/', 'about:blank', 'data:text/html,x', 'blob:x', o + '.evil/', 'javascript:1'):
             self.assertFalse(self.b.top_url_ok(u), u)
 
     def test_link_rule(self):

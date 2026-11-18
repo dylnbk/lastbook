@@ -2,7 +2,7 @@
 
 Two ways in, one module:
   - setup mode (no library yet): app/main.py makes a Bridge around SetupServer, whose Handler serves web/setup.html at /, the web
-    folder at /ui/, and /api/setup/* here. Nothing else.
+    folder at /ui/, /api/setup/* here, and /api/wizard/* (engine/wizard/api.py: a library of chosen parts). Nothing else.
   - normal mode: server.py hands /api/setup/ to handle(). The app's main.py configures it first (configure(...)); a bare
     server.py gets a manage-mode Setup on first use, with no relaunch (finish then answers restart: true).
 
@@ -1215,8 +1215,12 @@ def configure(**kw):
 def _default():
     global SETUP
     if SETUP is None:
-        from engine import paths
-        if sys.platform == 'win32':
+        from engine import paths, portable
+        if os.environ.get('LASTBOOK_SETTINGS'):         # a folder named outright, for a server run for testing
+            settings = Path(os.environ['LASTBOOK_SETTINGS'])
+        elif portable.is_portable(paths.DATA):          # a library that travels keeps the program's state on its own drive
+            settings = portable.state_dir(paths.DATA)
+        elif sys.platform == 'win32':
             settings = Path(os.environ.get('APPDATA') or Path.home() / 'AppData' / 'Roaming') / 'Lastbook'
         elif sys.platform.startswith('linux'):
             settings = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'Lastbook'
@@ -1337,6 +1341,9 @@ class SetupHandler(BaseHTTPRequestHandler):
             return _send_json(self, {'error': 'not found'}, 404)
         if path.startswith('/api/setup/'):
             return handle(self, self.command, path)
+        if path.startswith('/api/wizard/'):     # a library of chosen parts, built here instead of downloaded whole
+            from engine.wizard import api as wizard_api
+            return wizard_api.handle(self, self.command, path)
         return _send_json(self, {'error': 'not found'}, 404)
 
     do_HEAD = do_GET
@@ -1345,6 +1352,9 @@ class SetupHandler(BaseHTTPRequestHandler):
         path = self._path()
         if path.startswith('/api/setup/'):
             return handle(self, 'POST', path)
+        if path.startswith('/api/wizard/'):
+            from engine.wizard import api as wizard_api
+            return wizard_api.handle(self, 'POST', path)
         return _send_json(self, {'error': 'not found'}, 404)
 
 

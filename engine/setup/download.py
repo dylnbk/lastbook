@@ -466,6 +466,8 @@ def _tries(fn, control=None, tries=NETWORK_TRIES):
             if disk_full(e):
                 raise Failed('no_space', 'The disk filled up while downloading. Free some space, then try again.')
             if attempt == tries - 1:
+                if str(e).startswith('HTTP 5'):     # the server answered, and said it could not: the connection is not what is wrong
+                    raise Failed('network', f'The download server is too busy to answer ({e}). Try again in a few minutes.')
                 raise Failed('network', f'The connection kept breaking ({type(e).__name__}). Check the internet connection, then try again.')
             wait = BACKOFF[min(attempt, len(BACKOFF) - 1)]
             control.sleep(wait) if control is not None else time.sleep(wait)

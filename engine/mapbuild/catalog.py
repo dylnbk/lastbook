@@ -98,10 +98,46 @@ class Catalog:
         return []
 
 
-def slim(catalog):
-    """What the app carries for choosing regions with no connection: no outlines, only a box each."""
+def slim(catalog, sizes=None, as_of=None):
+    """What the app carries for choosing regions with no connection: no outlines, only a box each.
+    sizes: {region id: megabytes of its extract}, so a choice can be given a size before anything is downloaded."""
     out = []
     for e in sorted(catalog.entries.values(), key=lambda e: (e.parent or '', e.name)):
-        out.append({'id': e.id, 'name': e.name, 'parent': e.parent, 'box': [round(v, 3) for v in e.box],
-                    'iso': catalog.iso_of(e.id), 'composite': e.id in COMPOSITE, 'parts': e.id in FROM_PARTS})
-    return {'source': 'Geofabrik download server index (download.geofabrik.de/index-v1.json)', 'regions': out}
+        d = {'id': e.id, 'name': e.name, 'parent': e.parent, 'box': [round(v, 3) for v in e.box],
+             'iso': catalog.iso_of(e.id), 'composite': e.id in COMPOSITE, 'parts': e.id in FROM_PARTS}
+        if sizes and sizes.get(e.id):
+            d['mb'] = sizes[e.id]
+        out.append(d)
+    # A continent, and a country built from its parts, is as large as what is inside it. (The server sends its largest
+    # files from another address, which Lastbook does not follow, so their own sizes are not asked.)
+    for d in out:
+        if 'mb' not in d:
+            inside = [x['mb'] for x in out if x['parent'] == d['id'] and not x['composite'] and x.get('mb')]
+            if inside:
+                d['mb'], d['summed'] = round(sum(inside), 1), True
+    made = {'source': 'Geofabrik download server index (download.geofabrik.de/index-v1.json)', 'regions': out}
+    if as_of:
+        made['sizes_as_of'] = as_of
+    return made
+
+
+# What a built region comes to, from the ones built for docs/WORLD-MAPS.md (4 at detail, 30 at overview, November 2026):
+# map and places together as a share of the extract, and elevation per square degree of the region's box.
+BUILT = {'detail': {'data': 2.75, 'terrain_mb': 3.3, 'dem_mb': 6.0, 'minutes_per_gb': 28},
+         'overview': {'data': 0.17, 'terrain_mb': 0.4, 'dem_mb': 1.5, 'minutes_per_gb': 6}}
+LAND_MB = 930           # the world's coastline, which every build needs once, whatever the regions: the download...
+LAND_UNPACKED_MB = 1400     # ...and the room it takes unpacked and indexed, while maps are being built
+
+
+def estimate(region, level='detail', terrain=True):
+    """{'bytes', 'download_bytes', 'minutes'} for one region of the slim catalog, or None when its extract's size is not known.
+    An estimate, and a loose one: a region of open farmland and one of dense streets differ by three times either way."""
+    mb = region.get('mb')
+    if not mb:
+        return None
+    k = BUILT['overview' if level == 'overview' else 'detail']
+    w, s, e, n = region['box']
+    area = max(0.0, (e - w) * (n - s))
+    built = mb * k['data'] + (area * k['terrain_mb'] if terrain else 0)
+    fetched = mb + (area * k['dem_mb'] if terrain else 0)
+    return {'bytes': int(built * 1e6), 'download_bytes': int(fetched * 1e6), 'minutes': max(1, round(mb / 1000 * k['minutes_per_gb']))}

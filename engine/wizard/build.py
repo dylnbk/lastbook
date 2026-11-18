@@ -6,23 +6,27 @@ target   the LastbookData folder to make (on any disk; a drive that travels is m
 source   where the pack's files come from:
            LocalSource(folder)   a copy of the pack already on a disk here
            RemoteSource(url)     the published pack, read in place: only the chosen files are downloaded
+           None                  the library in target is kept as it is: only maps and an AI model are added
 choice   {'documents': [...], 'encyclopedias': [...], 'videos': {...}      as engine/wizard/contents.py
           'maps': [{'id': 'great-britain', 'level': 'detail', 'terrain': True}, ...],
+          'ai': {'mode': 'none'} | {'mode': 'computer', 'id': ..., 'copy': True} | {'mode': 'download', 'repo': ..., 'version': ...},
           'encoder': 'software' or 'hardware', 'threads': 6, 'portable': True}
 
 What it does, in this order, each step picking up where a run that stopped left off:
-  1. maps      each region not already built (engine/mapbuild)
+  1. maps      each region not already built (engine/mapbuild); what they were made from is then deleted
   2. files     everything brought as it is: documents, pages, transcripts, encyclopedias, videos that are small already
   3. library   catalog, search index and counts are written: from here the library opens in the app, with every video
                still to be made smaller shown by its words alone
-  4. videos    one at a time, each original read, re-encoded and (from a remote pack) deleted; the catalog is rewritten
+  4. AI        the model chosen: copied from another program on this computer, or brought from Hugging Face
+  5. videos    one at a time, each original read, re-encoded and (from a remote pack) deleted; the catalog is rewritten
                as they finish, so the library fills in while it is being used
-  5. finish    the manifest of every file, with sizes and checksums
+  6. finish    the manifest of every file, with sizes and checksums
 
 Nothing here opens a connection itself: RemoteSource goes through engine/wizard/packzip.py and engine/setup/download.py.
 Polite by default: one video at a time at low priority on a limited number of threads, and whatever rate limit the caller
 set on download.THROTTLE.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -87,11 +91,11 @@ class LocalSource:
             library.copy_file(src, dest, control, told)
         return missing
 
-    def original(self, pack_path, scratch, control=None):
+    def original(self, pack_path, scratch, control=None, told=None):
         """(path of the file to read, whether it is a temporary copy to delete after)."""
         return self.local(pack_path), False
 
-    def search_index(self, scratch, control=None):
+    def search_index(self, scratch, control=None, told=None):
         return self.local(LIB + 'search.sqlite')
 
 
@@ -155,11 +159,11 @@ class RemoteSource:
             p.close()
         return missing
 
-    def original(self, pack_path, scratch, control=None):
+    def original(self, pack_path, scratch, control=None, told=None):
         members, missing = self._members([pack_path])
         if missing:
             return None, False
-        p = self._puller(Path(scratch) / 'originals', control, workers=1)
+        p = self._puller(Path(scratch) / 'originals', control, workers=1, progress=(lambda done, total, files, of: told(done, total)) if told else None)
         try:
             got = p.run(members)
             path = p.path(members[0])
@@ -167,8 +171,8 @@ class RemoteSource:
             p.close()
         return (path if not got['errors'] else None), True
 
-    def search_index(self, scratch, control=None):
-        path, _ = self.original(LIB + 'search.sqlite', scratch, control)
+    def search_index(self, scratch, control=None, told=None):
+        path, _ = self.original(LIB + 'search.sqlite', scratch, control, told)
         return path
 
 
@@ -230,6 +234,13 @@ class Build:
     def run(self):
         """Returns the final status. Raises download.Stopped when paused or cancelled, Refused or download.Failed when it cannot go on."""
         self.target.mkdir(parents=True, exist_ok=True)
+        if self.source is None:         # a library that is here already, kept as it is: maps and an AI model are added, nothing else is touched
+            if not (self.lib / 'catalog.json').is_file():
+                raise Refused('There is no library in that folder to add to.')
+            self._maps()
+            self._ai()
+            self._set(phase='done', message='Added to the library.')
+            return self.status()
         self.scratch.mkdir(parents=True, exist_ok=True)
         if self.choice.get('portable'):
             portable.mark(self.target)
@@ -243,11 +254,12 @@ class Build:
         free = library.free_bytes(self.target)
         if free < need + 2 * 2**30:
             raise Refused(f'This choice needs about {need / 1e9:.0f} GB more, and the disk has {free / 1e9:.0f} GB free.')
-        self._set(total_bytes=plan['bytes'], videos_total=len(plan['shrink']))
+        self._set(total_bytes=sum(b for _, b, _ in plan['copy']), videos_total=len(plan['shrink']))     # the bytes brought as they are: what the files step counts up to
         self._save_state()
         self._maps()
         self._files(plan)
         self._library(pack, plan, final=False)
+        self._ai()
         self._videos(pack, plan)
         self._finish(pack, plan)
         return self.status()
@@ -264,23 +276,83 @@ class Build:
         wanted = self.choice.get('maps') or []
         if not wanted:
             return
-        from engine.mapbuild import build as mapbuild
-        b = mapbuild.Builder(self.target, self.sources_folder, say=self.say, control=self.control, workers=int(self.choice.get('map_workers') or 2))
+        self._set(phase='maps', maps_done=0, maps_total=len(wanted), message='Getting ready to build the maps')
+        try:
+            from engine.mapbuild import build as mapbuild
+        except ImportError as e:        # no osmium in this copy: the library is still built, without its maps
+            return self._problem(f'This copy of Lastbook cannot build maps ({e.name or "a part"} is missing). The rest of the library is built without them.')
+        # What the maps are made from is kept beside the library being built, on its drive: never in the home folder
+        named = self.sources_folder or os.environ.get('LASTBOOK_MAP_SOURCES')       # a folder someone keeps for this: used, and left alone
+        own = not named
+        folder = Path(named) if named else self.target.parent / '.lastbook' / 'map-sources'
+        b = mapbuild.Builder(self.target, folder, say=self.say, control=self.control, workers=int(self.choice.get('map_workers') or 2))
+        failed = 0
         try:
             for i, m in enumerate(wanted, 1):
                 self.control.check()
                 level = m.get('level') or 'detail'
-                self._set(phase='maps', message=f'Map {i} of {len(wanted)}: {m["id"]}')
-                if b.current(m['id'], level):
-                    continue
-                try:
-                    b.build(m['id'], level=level, terrain=m.get('terrain', True))
-                except (download.Stopped, KeyboardInterrupt):
-                    raise
-                except Exception as e:      # one region that fails does not cost the library
-                    self._problem(f'The map of {m["id"]} could not be built ({getattr(e, "message", None) or type(e).__name__ + ": " + str(e)}).')
+                self._set(message=f'Map {i} of {len(wanted)}: {m.get("name") or m["id"]}')
+                if not b.current(m['id'], level):
+                    try:
+                        b.build(m['id'], level=level, terrain=m.get('terrain', True))
+                    except (download.Stopped, KeyboardInterrupt):
+                        raise
+                    except Exception as e:      # one region that fails does not cost the library
+                        failed += 1
+                        self._problem(f'The map of {m.get("name") or m["id"]} could not be built ({getattr(e, "message", None) or type(e).__name__ + ": " + str(e)}).')
+                self._set(maps_done=i)
         finally:
             b.close()
+        if own and not failed and not self.choice.get('keep_sources'):
+            # Several times the size of the maps made from them, and of no use to the library once it is built
+            shutil.rmtree(folder, ignore_errors=True)
+
+    # ---------------------------------------------------------------------------------------------------- AI ----
+    def _ai(self):
+        """The model the person chose, into the library: {'mode': 'none'}, {'mode': 'computer', 'id', 'copy': bool} for one
+        another program on this computer already holds, or {'mode': 'download', 'repo', 'version', 'draft': bool} from Hugging Face."""
+        want = self.choice.get('ai') or {}
+        mode = want.get('mode') or 'none'
+        if mode not in ('computer', 'download'):
+            return
+        from engine.ai import carry, models, picker
+        from . import hf_import
+        self._set(phase='ai', message='Putting the AI model in the library', ai_done_bytes=0, ai_total_bytes=0)
+
+        def tell(s):
+            self._set(ai_done_bytes=s.get('done_bytes') or 0, ai_total_bytes=s.get('total_bytes') or 0)
+        chosen = None
+        try:
+            if mode == 'computer':
+                m = next((m for m in models.on_computer() if m['id'] == want.get('id')), None)
+                if m is None:
+                    return self._problem('The AI model chosen is not on this computer any more. Choose one in the app: Chat, then Model.')
+                chosen = m['id']
+                if want.get('copy', True):
+                    chosen = carry.model(m, data=self.target, progress=tell, cancelled=lambda: self.control.ev.is_set())
+            else:
+                found = hf_import.inspect(str(want.get('repo') or ''), data=self.target)
+                version = want.get('version') or found.get('recommended')
+                if not want.get('draft'):
+                    found = dict(found, draft=None)
+                folder = hf_import.Import(found, version, data=self.target, control=self.control, progress=tell).run()
+                there = [m for m in models.on_drive(self.target) if Path(m['path']).parent == folder]
+                chosen = next((m['id'] for m in there if m['file'] == version), there[0]['id'] if len(there) == 1 else None)
+            if self.choice.get('portable') and chosen and chosen.startswith('drive:'):
+                try:        # the program that runs models, beside them: the drive then answers on a computer with nothing installed
+                    carry.runtime(self.target)
+                except (carry.Refused, OSError) as e:
+                    if 'already' not in str(e):
+                        self._problem(f'The program that runs AI models could not be copied to the drive ({e}). On another computer the model will need one installed.')
+            if chosen:
+                picker.Picker(self.target).select(chosen)
+        except (carry.Refused, hf_import.Refused) as e:
+            self.control.check()        # stopped by the person: that is not a problem with the model
+            self._problem(f'The AI model could not be put in the library: {e}')
+        except download.Failed as e:
+            self._problem(f'The AI model could not be downloaded: {e.message}')
+        except (KeyError, ValueError, OSError) as e:
+            self._problem(f'The AI model could not be put in the library ({type(e).__name__}).')
 
     # ------------------------------------------------------------------------------------------------- files ----
     def _files(self, plan):
@@ -322,13 +394,26 @@ class Build:
         return out
 
     def _library(self, pack, plan, final):
-        self._set(phase='library', message='Writing the catalog and the search index')
+        self._set(phase='finishing' if final else 'library', message='Writing the catalog and the search index', index_done_bytes=0, index_total_bytes=0)
         records = self._records(pack, plan)
-        search = self.source.search_index(self.scratch, self.control)
-        if search is None:
-            raise Refused('The pack’s search index could not be had.')
-        if final or not (self.lib / 'search.sqlite').is_file():
-            library.write_search(search, self.lib, {r['id'] for r in records}, self.control)
+        # The search index holds the words of exactly the records kept. It is written again only when that set has changed:
+        # at the end of most builds it is the one written when the documents came in.
+        ids = {r['id'] for r in records}
+        mark = hashlib.sha256('\n'.join(sorted(ids)).encode()).hexdigest()
+        try:
+            same = (self.lib / 'search.sqlite').is_file() and (self.work / 'search.mark').read_text(encoding='utf-8') == mark
+        except OSError:
+            same = False
+        if not same:
+            if self.source.remote:
+                self._set(message='Bringing the pack’s search index')
+            search = self.source.search_index(self.scratch, self.control, lambda done, total: self._set(index_done_bytes=done, index_total_bytes=total))
+            if search is None:
+                raise Refused('The pack’s search index could not be had.')
+            self._set(message='Writing the catalog and the search index', index_done_bytes=0, index_total_bytes=0)
+            library.write_search(search, self.lib, ids, self.control)
+            self.work.mkdir(parents=True, exist_ok=True)
+            (self.work / 'search.mark').write_text(mark, encoding='utf-8')
         library.write_catalog(self.lib, records)
         library.write_summary(self.lib, records)
         counts = dict(plan['counts'], videos_pending=sum(1 for r in records if r.get('pending')))

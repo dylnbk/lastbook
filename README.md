@@ -96,7 +96,7 @@ The setup contract, including state maps, is in [docs/SETUP-API.md](docs/SETUP-A
 | `derived/packs/pack-spec.json` | What goes into each download pack (Small, Medium, All and add-ons) and each state map. Everything else under `derived/` is generated and not kept here. |
 | `tools/` | Builders for the offline map, addresses and place finder, plus curator helpers (`libq.py`, `validate_topics.py`). |
 | `website/`, `website-next/` | The earlier website and the current static lastbook.org site, respectively. |
-| `docs/` | The setup contract (`SETUP-API.md`), how the offline map is put together (`MAPS.md`), maps of anywhere in the world built from open data (`WORLD-MAPS.md`), choosing the AI model (`AI-MODELS.md`) and notes on the library server version (`LIBRARY-SERVER.md`). |
+| `docs/` | The setup contract (`SETUP-API.md`), how the offline map is put together (`MAPS.md`), maps of anywhere in the world built from open data (`WORLD-MAPS.md`), choosing the AI model (`AI-MODELS.md`), building a library of chosen parts (`WIZARD.md`) and notes on the library server version (`LIBRARY-SERVER.md`). |
 
 ## Run from source
 
@@ -220,7 +220,7 @@ before running them. Their disposable test distro is named `LastbookTest`, with 
 ## Tests
 
 ```bash
-python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_update app.tests.test_address_search app.tests.test_topic_search app.tests.test_chat_steps app.tests.test_validate_topics app.tests.test_libq app.tests.test_portable app.tests.test_wizard app.tests.test_regions app.tests.test_mapbuild app.tests.test_ai
+python3 -B -m unittest app.tests.test_bridge app.tests.test_setup app.tests.test_data_folder app.tests.test_what_ships app.tests.test_update app.tests.test_address_search app.tests.test_topic_search app.tests.test_chat_steps app.tests.test_validate_topics app.tests.test_libq app.tests.test_portable app.tests.test_wizard app.tests.test_regions app.tests.test_mapbuild app.tests.test_ai app.tests.test_build app.tests.test_builder
 ```
 
 `test_bridge` needs a data folder (`LASTBOOK_DATA`); the others run without a library. `test_mapbuild` reads
