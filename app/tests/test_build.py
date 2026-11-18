@@ -40,9 +40,13 @@ class Temp(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='lb-build-'))
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        p = mock.patch.object(contents, 'BIG_CHANNEL', 500_000)      # a "large channel" at this pack's scale
-        p.start()
-        self.addCleanup(p.stop)
+        # No test here may reach a real server, whatever it gets wrong: every host is unknown to the downloader, so a fetch
+        # that should not happen is refused at once instead of bringing a country's map down. (The tests that do download
+        # name their own server on this computer, which is asked for outright and does not go through this list.)
+        for p in (mock.patch.object(contents, 'BIG_CHANNEL', 500_000),      # a "large channel" at this pack's scale
+                  mock.patch.object(download, 'ALLOWED_HOSTS', frozenset()), mock.patch.object(download, 'ALLOWED_SUFFIXES', ())):
+            p.start()
+            self.addCleanup(p.stop)
 
     def pack(self, videos=None):
         recs, files = buildkit.records_and_files(videos)
@@ -425,7 +429,10 @@ class Built(Temp):
         db.close()
 
     def test_a_copy_that_cannot_build_maps_still_builds_the_library(self):
-        with mock.patch.dict(sys.modules, {'engine.mapbuild.build': None}):                 # as a copy packaged without osmium
+        # As a copy packaged without osmium. (Hiding the module's name instead does not work once anything in the same run has
+        # imported it: the build then went ahead with the real one and began fetching France. Found on the first run of every
+        # test in one process.)
+        with mock.patch.object(build, '_map_builder', side_effect=ImportError("No module named 'osmium'", name='osmium')):
             b, status = self.run_build(dict(EVERYTHING, maps=[{'id': 'france'}]))
         self.assertEqual(status['phase'], 'done')
         self.assertEqual(len(status['problems']), 1)

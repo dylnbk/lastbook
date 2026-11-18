@@ -22,7 +22,10 @@ def load():
     finally:
         sys.path.remove(str(ROOT))
         for name in set(sys.modules) - set(before):
-            del sys.modules[name]
+            # numpy stays: it cannot be loaded twice in one process, and tests later in the same run import it
+            # (found when every test was first run in one process, on GitHub: "cannot load module more than once per process")
+            if name.split('.')[0] != 'numpy':
+                del sys.modules[name]
         sys.modules.update(before)
         if 'onnxruntime' not in before:
             sys.modules.pop('onnxruntime', None)

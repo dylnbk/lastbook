@@ -37,7 +37,9 @@ class Base(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix='lb-builder-'))
         self.addCleanup(shutil.rmtree, self.tmp, True)
+        from engine.setup import download as dl
         for p in (mock.patch.object(contents, 'BIG_CHANNEL', 500_000), mock.patch.object(models, 'places', return_value=[]),
+                  mock.patch.object(dl, 'ALLOWED_HOSTS', frozenset()), mock.patch.object(dl, 'ALLOWED_SUFFIXES', ()),     # no test here reaches a real server
                   mock.patch.object(api, '_regions_catalog', return_value=json.loads(json.dumps(REGIONS))),
                   mock.patch.object(drives, 'listed', return_value=[]), mock.patch.dict(os.environ, {'OLLAMA_MODELS': str(self.tmp / 'no-ollama')})):
             p.start()

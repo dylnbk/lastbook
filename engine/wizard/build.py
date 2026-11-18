@@ -179,6 +179,12 @@ class RemoteSource:
         return path
 
 
+def _map_builder():
+    """The part that builds maps (engine/mapbuild/build.py). Raises ImportError in a copy of Lastbook that has no osmium."""
+    from engine.mapbuild import build as mapbuild
+    return mapbuild
+
+
 class _Either:
     """The build's own control, and a second reason to stop: a video being made beside this one has failed."""
 
@@ -311,7 +317,7 @@ class Build:
             return
         self._set(phase='maps', maps_done=0, maps_total=len(wanted), message='Getting ready to build the maps')
         try:
-            from engine.mapbuild import build as mapbuild
+            mapbuild = _map_builder()
         except ImportError as e:        # no osmium in this copy: the library is still built, without its maps
             return self._problem(f'This copy of Lastbook cannot build maps ({e.name or "a part"} is missing). The rest of the library is built without them.')
         # What the maps are made from is kept beside the library being built, on its drive: never in the home folder
