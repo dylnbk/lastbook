@@ -200,6 +200,7 @@ class Runner:
                 shutil.rmtree(self.folder, ignore_errors=True)
                 self.folder = tempfile.mkdtemp(prefix='lb-ai-', dir='/tmp')
                 self.sock = os.path.join(self.folder, 'ai.sock')
+            atexit.register(shutil.rmtree, self.folder, True)      # a program that ends without stopping the model still leaves no folder behind
         else:
             s = socket.socket()
             s.bind(('127.0.0.1', 0))

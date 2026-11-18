@@ -43,6 +43,38 @@ def scratch():
     return Path(os.environ.get('LASTBOOK_SCRATCH') or tempfile.gettempdir())
 
 
+def _forget_stale_nodes():
+    """A build that was killed leaves its list of points behind: several gigabytes, in the system's temporary folder, under a
+    name that holds the number of the process that made it. Found by looking: 3.9 GB from a build stopped five hours before.
+    Before a build starts, those whose process is gone are deleted."""
+    try:
+        files = list(scratch().glob('lastbook-nodes-*'))
+    except OSError:
+        return
+    for f in files:
+        try:
+            pid = int(f.name.split('-')[2])
+        except (IndexError, ValueError):
+            continue
+        if pid == os.getpid():
+            continue
+        if os.name == 'nt':
+            gone = time.time() - f.stat().st_mtime > 2 * 86400      # no cheap way to ask here: one untouched for two days is nobody's
+        else:
+            try:
+                os.kill(pid, 0)
+                gone = False
+            except ProcessLookupError:
+                gone = True
+            except OSError:
+                gone = False        # someone else's process: not ours to judge
+        if gone:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+
+
 class Builder:
     def __init__(self, data, sources_folder=None, say=None, control=None, workers=2):
         self.root = regions_root(data)
@@ -104,6 +136,7 @@ class Builder:
         for p in parts:
             pbfs.append(self.src.get(p.pbf, f'geofabrik/{p.folder}.osm.pbf'))
         heavy = max(os.path.getsize(p) for p in pbfs) > BIG_PBF
+        _forget_stale_nodes()
         nodes = scratch() / f'lastbook-nodes-{os.getpid()}-{entry.folder}'
         if heavy:
             need = 3 * max(os.path.getsize(p) for p in pbfs)

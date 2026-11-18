@@ -296,6 +296,26 @@ class Whole(Temp):
         self.assertTrue(seen['node_index'].startswith(str(Path(tempfile.gettempdir()))))
         self.assertNotIn(str(self.tmp / 'LastbookData'), seen['node_index'])
 
+    @unittest.skipIf(os.name == 'nt', 'asks whether a process is there the POSIX way')
+    def test_what_a_killed_build_left_is_deleted_before_the_next(self):
+        import subprocess
+        gone = subprocess.Popen([sys.executable, '-c', 'pass'])
+        gone.wait()
+        own = self.tmp / 'scratch'
+        own.mkdir()
+        names = {'dead': f'lastbook-nodes-{gone.pid}-poland.0', 'mine': f'lastbook-nodes-{os.getpid()}-france.0', 'another': 'lastbook-nodes-1-spain.0',
+                 'odd': 'lastbook-nodes-notanumber-x.0', 'other': 'something-else.bin'}
+        for n in names.values():
+            (own / n).write_bytes(b'x' * 10)
+        with mock.patch.dict(os.environ, {'LASTBOOK_SCRATCH': str(own)}):
+            build._forget_stale_nodes()
+        left = sorted(p.name for p in own.iterdir())
+        self.assertNotIn(names['dead'], left)                       # its process is gone: several gigabytes nobody will come back for
+        for kept in ('mine', 'another', 'odd', 'other'):           # one in use, one whose process is someone's, and what is not a node file at all
+            self.assertIn(names[kept], left)
+        with mock.patch.dict(os.environ, {'LASTBOOK_SCRATCH': str(self.tmp / 'not-there')}):
+            build._forget_stale_nodes()                             # nothing to look in: nothing happens
+
 
 if __name__ == '__main__':
     unittest.main()
